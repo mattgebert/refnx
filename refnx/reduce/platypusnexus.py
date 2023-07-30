@@ -1,6 +1,7 @@
 import io
 import os
 import os.path
+from pathlib import Path
 import glob
 import argparse
 import re
@@ -54,7 +55,7 @@ spectrum_template = """<?xml version="1.0"?>
 </REFroot>"""
 
 
-def catalogue(start, stop, data_folder=None, prefix="PLP"):
+def catalogue(start, stop, data_folder=None, prefix="PLP", keys=None):
     """
     Extract interesting information from Platypus NeXUS files.
 
@@ -68,11 +69,21 @@ def catalogue(start, stop, data_folder=None, prefix="PLP"):
         path specifying location of NeXUS files
     prefix : {'PLP', 'SPZ'}, optional
         str specifying whether you want to catalogue Platypus or Spatz files
+    keys : sequence of str, optional
+        specifies the keys to be extracted from each catalogue. Overrides the
+        default set of keys.
 
     Returns
     -------
     catalog : pd.DataFrame
         Dataframe containing interesting parameters from Platypus Nexus files
+
+    Notes
+    -----
+    The default set of keys is:
+    ["filename", "end_time", "sample_name", "ss1vg", "ss2vg", "ss3vg",
+      "ss4vg", "omega", "twotheta", "total_counts", "bm1_counts", "time",
+      "daq_dirname", "start_time"]
     """
     info = ["filename", "end_time", "sample_name"]
 
@@ -90,6 +101,9 @@ def catalogue(start, stop, data_folder=None, prefix="PLP"):
         "daq_dirname",
         "start_time",
     ]
+
+    if keys is not None:
+        info = list(keys)
 
     run_number = []
     d = {key: [] for key in info}
@@ -288,11 +302,27 @@ class SpatzCatalogue(Catalogue):
         d["detrot"] = d["twotheta"]
         d["dz"] = d["twotheta"]
 
+        ###############################################
         # detector longitudinal translation from sample
-        d["dy"] = (
-            h5d["entry1/instrument/detector/detector_distance/pos"][:]
-            - d["sample_distance"]
-        )
+        ###############################################
+        d["dy"] = None
+        try:
+            d["dy"] = (
+                h5d["entry1/instrument/detector/detector_distance/pos"][:]
+                - d["sample_distance"]
+            )
+        except KeyError:
+            # entry was renamed after detector translation was added in 12268
+            pass
+
+        try:
+            d["dy"] = h5d[
+                "entry1/instrument/detector/longitudinal_translation"
+            ][:]
+        except KeyError:
+            pass
+        if d["dy"] is None:
+            raise ValueError("SPZ: dy is not present in the dataset")
 
         # logical size (mm) of 1 pixel in the scattering plane
         try:
@@ -1744,8 +1774,8 @@ class ReflectNexus:
         m_lambda = 0.5 * (m_lambda_hist[:, 1:] + m_lambda_hist[:, :-1])
         TOF -= t_offset
 
-        # gravity correction if direct beam
-        if direct:
+        # gravity correction if direct beam, but only if you're on Platypus
+        if direct and isinstance(self, PlatypusNexus):
             # TODO: Correlated Uncertainties?
             detector, detector_sd, m_gravcorrcoefs = self.correct_for_gravity(
                 detector, detector_sd, m_lambda, lo_wavelength, hi_wavelength
@@ -2138,6 +2168,36 @@ class ReflectNexus:
         )
 
         return detector, frame_count, bm1_counts
+
+
+def create_reflect_nexus(h5data):
+    """
+    Creates a ReflectNexus object from an HDF file
+
+    Parameters
+    ----------
+    h5data : {ReflectNexus, HDF5 NeXus file, str, Path}
+        A ReflectNexus object, an HDF5 NeXus file for Platypus/Spatz, or a
+        str/Path specifying the path to one
+    """
+    if isinstance(h5data, ReflectNexus):
+        return h5data
+
+    with _possibly_open_hdf_file(h5data, "r") as f:
+        fname = _check_HDF_file(f)
+        if not fname:
+            raise ValueError(f"{h5data!r} is not a valid HDF5 file")
+        pth = Path(fname)
+        instrument = pth.name[:3]
+
+        if instrument == "PLP":
+            return PlatypusNexus(f)
+        elif instrument == "SPZ":
+            return SpatzNexus(f)
+        else:
+            raise ValueError(
+                f"{h5data!r} doesn't appear to be a Spatz or Platypus file"
+            )
 
 
 class PlatypusNexus(ReflectNexus):
