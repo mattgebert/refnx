@@ -1,6 +1,7 @@
 import warnings
 import numpy as np
 from numpy.linalg import LinAlgError
+from scipy.linalg import LinAlgWarning
 from scipy.optimize._numdiff import approx_derivative
 import scipy.stats as stats
 
@@ -265,6 +266,9 @@ class Objective(BaseObjective):
         details.
     name : str
         Name for the objective.
+    alpha : {float, Parameter, None}, optional
+        Multiplies the overall log-prior term for the parameters. Used to
+        balance log-prior and log-likelihood terms in the log-posterior.
 
     Notes
     -----
@@ -286,6 +290,7 @@ class Objective(BaseObjective):
         logp_extra=None,
         auxiliary_params=(),
         name=None,
+        alpha=None,
     ):
         self.model = model
         # should be a Data1D instance
@@ -310,32 +315,37 @@ class Objective(BaseObjective):
         if name is None:
             self.name = id(self)
 
+        self.alpha = alpha
+        if alpha is not None:
+            self.alpha = possibly_create_parameter(alpha, name="alpha")
+
     def __str__(self):
-        s = ["{:_>80}".format("")]
-        s.append("Objective - {0}".format(self.name))
+        s = [f"{'':_>80}"]
+        s.append(f"Objective - {self.name}")
 
         # dataset name
         if self.data.name is None:
-            s.append("Dataset = {0}".format(self.data))
+            s.append(f"Dataset = {self.data}")
         else:
-            s.append("Dataset = {0}".format(self.data.name))
+            s.append(f"Dataset = {self.data.name}")
 
-        s.append("datapoints = {0}".format(self.npoints))
-        s.append("chi2 = {0}".format(self.chisqr()))
-        s.append("Weighted = {0}".format(self.weighted))
-        s.append("Transform = {0}".format(self.transform))
+        s.append(f"datapoints = {self.npoints}")
+        s.append(f"chi2 = {self.chisqr()}")
+        s.append(f"Weighted = {self.weighted}")
+        s.append(f"Transform = {self.transform}")
         s.append(str(self.parameters))
 
         return "\n".join(s)
 
     def __repr__(self):
         return (
-            "Objective({model!r}, {data!r},"
-            " lnsigma={lnsigma!r},"
-            " use_weights={_use_weights},"
-            " transform={transform!r},"
-            " logp_extra={logp_extra!r},"
-            " name={name!r})".format(**self.__dict__)
+            f"Objective({self.model!r}, {self.data!r},"
+            f" lnsigma={self.lnsigma!r},"
+            f" use_weights={self._use_weights},"
+            f" transform={self.transform!r},"
+            f" logp_extra={self.logp_extra!r},"
+            f" name={self.name!r},"
+            f" alpha={self.alpha!r})"
         )
 
     @property
@@ -482,12 +492,15 @@ class Objective(BaseObjective):
         fitting system.
 
         """
+        pars = self.model.parameters
+
+        if is_parameter(self.alpha):
+            pars |= self.alpha
         if is_parameter(self.lnsigma):
-            return self.lnsigma | self.auxiliary_params | self.model.parameters
-        elif len(self.auxiliary_params):
-            return self.auxiliary_params | self.model.parameters
-        else:
-            return self.model.parameters
+            pars |= self.lnsigma
+        if len(self.auxiliary_params):
+            pars |= self.auxiliary_params
+        return pars
 
     def setp(self, pvals):
         """
@@ -712,7 +725,12 @@ class Objective(BaseObjective):
 
         """
         self.setp(pvals)
-        logpost = self.logp()
+
+        alpha = 1.0
+        if is_parameter(self.alpha):
+            alpha = self.alpha.value
+
+        logpost = alpha * self.logp()
 
         # only calculate the probability if the parameters have finite
         # log-prior
@@ -766,10 +784,11 @@ class Objective(BaseObjective):
             var_params = self.varying_parameters()
             singular_params = [var_params[ps] for ps in psingular]
 
-            raise LinAlgError(
+            warnings.warn(
                 "The following Parameters have no effect on"
                 " Objective.residuals, please consider fixing"
-                " them.\n" + repr(singular_params)
+                " them.\n" + repr(singular_params),
+                LinAlgWarning,
             )
 
         return covar
@@ -1008,9 +1027,14 @@ class GlobalObjective(Objective):
         Lagrangian multipliers for each of the objective terms that contribute
         to the log-likelihood. Broadcast against the list of objectives. This
         array-like *may* become a list of Parameters in the future.
+
+    alpha : {float, Parameter, None}, optional
+        Multiplies the overall log-prior term for the parameters. Used to
+        balance log-prior and log-likelihood terms in the log-posterior.
+
     """
 
-    def __init__(self, objectives, lambdas=None):
+    def __init__(self, objectives, lambdas=None, alpha=1.0):
         self.objectives = objectives
 
         nobj = len(objectives)
@@ -1029,8 +1053,12 @@ class GlobalObjective(Objective):
                 " unweighted, you cannot have a mixture."
             )
 
+        self.alpha = alpha
+        if alpha is not None:
+            self.alpha = possibly_create_parameter(alpha, name="alpha")
+
     def __str__(self):
-        s = ["{:_>80}".format("\n")]
+        s = [f"{'':_>80}", "\n"]
         s.append("--Global Objective--")
         for obj in self.objectives:
             s.append(str(obj))
@@ -1038,7 +1066,11 @@ class GlobalObjective(Objective):
         return "\n".join(s)
 
     def __repr__(self):
-        return f"GlobalObjective({self.objectives!r}, lambdas={list(self.lambdas)!r})"
+        return (
+            f"GlobalObjective({self.objectives!r},"
+            f" lambdas={list(self.lambdas)!r},"
+            f" alpha={self.alpha!r})"
+        )
 
     @property
     def weighted(self):
@@ -1338,7 +1370,7 @@ class Transform:
             )
 
     def __repr__(self):
-        return "Transform({0})".format(repr(self.form))
+        return f"Transform({self.form!r})"
 
     def __call__(self, x, y, y_err=None):
         """

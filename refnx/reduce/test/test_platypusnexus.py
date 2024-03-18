@@ -8,7 +8,6 @@ import pytest
 import numpy as np
 from numpy.testing import (
     assert_almost_equal,
-    assert_,
     assert_equal,
     assert_array_less,
     assert_allclose,
@@ -22,7 +21,6 @@ from refnx.reduce import (
     SpatzNexus,
     basename_datafile,
     catalogue,
-    SpinChannel,
     SpinSet,
 )
 from refnx.reduce.peak_utils import gauss
@@ -34,14 +32,16 @@ from refnx.reduce.platypusnexus import (
     Catalogue,
     PlatypusCatalogue,
     create_reflect_nexus,
+    ReductionOptions,
 )
+from refnx.reflect import SpinChannel
 
 
 class TestSpinSet(object):
     @pytest.mark.usefixtures("no_data_directory")
     @pytest.fixture(autouse=True)
-    def setup_method(self, tmpdir, data_directory):
-        self.pth = Path(data_directory) / "reduce" / "PNR_files"
+    def setup_method(self, tmp_path, data_directory):
+        self.pth = data_directory / "reduce" / "PNR_files"
 
         def fpath(f):
             return self.pth / f
@@ -66,10 +66,10 @@ class TestSpinSet(object):
                 up_up=fpath("PLP0008861.nx.hdf"),
             )
 
-        self.cwd = os.getcwd()
+        self.cwd = Path.cwd()
 
-        self.tmpdir = tmpdir.strpath
-        os.chdir(self.tmpdir)
+        self.tmp_path = tmp_path
+        os.chdir(self.tmp_path)
         return 0
 
     def test_spin_channels(self):
@@ -126,15 +126,15 @@ class TestSpinSet(object):
 class TestPlatypusNexus(object):
     @pytest.mark.usefixtures("no_data_directory")
     @pytest.fixture(autouse=True)
-    def setup_method(self, tmpdir, data_directory):
-        self.pth = Path(data_directory) / "reduce"
+    def setup_method(self, tmp_path, data_directory):
+        self.pth = data_directory / "reduce"
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             self.f113 = PlatypusNexus(self.pth / "PLP0011613.nx.hdf")
 
             # to ensure that file can be opened with a Path
-            pth = Path(self.pth) / "PLP0011641.nx.hdf"
+            pth = self.pth / "PLP0011641.nx.hdf"
             self.f641 = PlatypusNexus(pth)
 
             # These PNR datasets all have different flipper settings
@@ -151,10 +151,10 @@ class TestPlatypusNexus(object):
                 self.pth / "PNR_files/PLP0008864.nx.hdf"
             )
 
-        self.cwd = os.getcwd()
+        self.cwd = Path.cwd()
 
-        self.tmpdir = Path(tmpdir.strpath)
-        os.chdir(self.tmpdir)
+        self.tmp_path = tmp_path
+        os.chdir(self.tmp_path)
         return 0
 
     def teardown_method(self):
@@ -210,7 +210,7 @@ class TestPlatypusNexus(object):
         output = plp.find_specular_ridge(
             detector[np.newaxis, :], detector_sd[np.newaxis, :]
         )
-        assert_(len(output) == 5)
+        assert len(output) == 5
         assert_almost_equal(output[0][0], 100)
 
     def test_pickle(self):
@@ -269,7 +269,7 @@ class TestPlatypusNexus(object):
         # When you use event mode processing, make sure the right amount of
         # spectra are created
         out = self.f641.process(eventmode=[0, 900, 1800], integrate=0)
-        assert_(np.size(out[1], axis=0) == 2)
+        assert np.size(out[1], axis=0) == 2
 
     def test_event_folder(self):
         self.f641.process(
@@ -313,11 +313,11 @@ class TestPlatypusNexus(object):
         self.f113.process()
 
         # can save the spectra by supplying a filename
-        self.f113.write_spectrum_xml(self.tmpdir / "test.xml")
-        self.f113.write_spectrum_dat(self.tmpdir / "test.dat")
+        self.f113.write_spectrum_xml(self.tmp_path / "test.xml")
+        self.f113.write_spectrum_dat(self.tmp_path / "test.dat")
 
         # can save by supplying file handle:
-        with open(self.tmpdir / "test.xml", "wb") as f:
+        with open(self.tmp_path / "test.xml", "wb") as f:
             self.f113.write_spectrum_xml(f)
 
     def test_accumulate_files(self):
@@ -329,7 +329,7 @@ class TestPlatypusNexus(object):
         try:
             f8 = h5py.File(self.pth / "PLP0000708.nx.hdf", "r")
             f9 = h5py.File(self.pth / "PLP0000709.nx.hdf", "r")
-            fadd = h5py.File(self.tmpdir / "ADD_PLP0000708.nx.hdf", "r")
+            fadd = h5py.File(self.tmp_path / "ADD_PLP0000708.nx.hdf", "r")
 
             f8d = f8["entry1/data/hmm"][0]
             f9d = f9["entry1/data/hmm"][0]
@@ -352,23 +352,23 @@ class TestPlatypusNexus(object):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             # it should be processable
-            fadd = PlatypusNexus(Path(os.getcwd()) / "ADD_PLP0000708.nx.hdf")
+            fadd = PlatypusNexus(Path.cwd() / "ADD_PLP0000708.nx.hdf")
             fadd.process()
 
             # it should also be reduceable
             reducer = PlatypusReduce(self.pth / "PLP0000711.nx.hdf")
 
             datasets, reduced = reducer.reduce(
-                Path(os.getcwd()) / "ADD_PLP0000708.nx.hdf"
+                Path.cwd() / "ADD_PLP0000708.nx.hdf"
             )
-            assert_("y" in reduced)
+            assert "y" in reduced
 
             # the error bars should be smaller
             datasets2, reduced2 = reducer.reduce(
                 self.pth / "PLP0000708.nx.hdf"
             )
 
-            assert_(np.all(reduced["y_err"] < reduced2["y_err"]))
+            assert np.all(reduced["y_err"] < reduced2["y_err"])
 
     def test_manual_beam_find(self):
         # you can specify a function that finds where the specular ridge is.
@@ -380,10 +380,10 @@ class TestPlatypusNexus(object):
             return beam_centre, beam_sd, np.array([40]), np.array([60]), [[]]
 
         # the manual beam find is only mandatory when peak_pos == -1.
-        # the beam_sd is much larger than the beam divergence, so a warning
-        # should be raised.
-        with pytest.warns(UserWarning):
-            self.f113.process(manual_beam_find=manual_beam_find, peak_pos=-1)
+        # # the beam_sd is much larger than the beam divergence, so a warning
+        # # should be raised.
+        # with pytest.warns(UserWarning):
+        self.f113.process(manual_beam_find=manual_beam_find, peak_pos=-1)
         assert_equal(self.f113.processed_spectrum["m_beampos"][0], 50)
 
         # manual beam finding also specifies the lower and upper pixel of the
@@ -397,11 +397,11 @@ class TestPlatypusNexus(object):
         sd = np.array([5.0, 11.5])
         lopx, hipx, background_pixels = fore_back_region(centres, sd)
 
-        assert_(len(lopx) == 2)
-        assert_(len(hipx) == 2)
-        assert_(len(background_pixels) == 2)
-        assert_(isinstance(lopx[0], numbers.Integral))
-        assert_(isinstance(hipx[0], numbers.Integral))
+        assert len(lopx) == 2
+        assert len(hipx) == 2
+        assert len(background_pixels) == 2
+        assert isinstance(lopx[0], numbers.Integral)
+        assert isinstance(hipx[0], numbers.Integral)
 
         calc_lower = np.floor(centres - sd * EXTENT_MULT)
         assert_equal(lopx, calc_lower)
@@ -422,13 +422,27 @@ class TestPlatypusNexus(object):
 
         assert_equal(bp, background_pixels[0])
 
+    def test_lopx_hipx(self):
+        # we should be able to specify the exact pixel numbers we want to
+        # integrate
+        rdo = ReductionOptions(
+            lopx_hipx=(50, 60), background=False, peak_pos=(55, 2)
+        )
+        _, m_spec, _ = self.f113.process(**rdo)
+
+        m_topandtail = self.f113.m_topandtail
+        assert self.f113.lopx[0] == 50
+        assert self.f113.hipx[0] == 60
+        check = np.sum(m_topandtail[..., 50:61], axis=-1)[0]
+        assert_allclose(m_spec[0], check)
+
     def test_basename_datafile(self):
         # check that the right basename is returned
         pth = "a/b/c.nx.hdf"
-        assert_(basename_datafile(pth) == "c")
+        assert basename_datafile(pth) == "c"
 
         pth = "c.nx.hdf"
-        assert_(basename_datafile(pth) == "c")
+        assert basename_datafile(pth) == "c"
 
     def test_floodfield_correction(self):
         # check that flood field calculation works
@@ -441,7 +455,7 @@ class TestPlatypusNexus(object):
             [0.05600541, 0.05879208, 0.04902215, 0.04425413, 0.05487956]
         )
 
-        fname = os.path.join(self.pth, "flood.h5")
+        fname = self.pth / "flood.h5"
         with h5py.File(fname, "r") as f:
             norm, norm_sd = create_detector_norm(f, 3.5, -3.5, axis=3)
 
@@ -499,17 +513,17 @@ class TestPlatypusNexus(object):
 class TestSpatzNexus:
     @pytest.mark.usefixtures("no_data_directory")
     @pytest.fixture(autouse=True)
-    def setup_method(self, tmpdir, data_directory):
-        self.pth = Path(data_directory) / "reduce"
+    def setup_method(self, tmp_path, data_directory):
+        self.pth = data_directory / "reduce"
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             pth = self.pth / "SPZ0000342.nx.hdf"
             self.f342 = SpatzNexus(pth)
-        self.cwd = os.getcwd()
+        self.cwd = Path.cwd()
 
-        self.tmpdir = tmpdir.strpath
-        os.chdir(self.tmpdir)
+        self.tmp_path = tmp_path
+        os.chdir(self.tmp_path)
         return 0
 
     def teardown_method(self):

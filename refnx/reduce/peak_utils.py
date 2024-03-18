@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.integrate import simps, cumtrapz
+from scipy.integrate import simpson, cumulative_trapezoid
 from scipy.optimize import curve_fit
 
 
@@ -21,21 +21,21 @@ def centroid(y, x=None, dx=1.0):
     This is not really all that good of an algorithm, unless the peak is much
     higher than the background
     """
-    yt = np.asfarray(y)
+    yt = np.asarray(y).astype(float, copy=False)
 
     if x is None:
         x = np.arange(yt.size, dtype="float") * dx
 
-    normaliser = simps(yt, x)
+    normaliser = simpson(yt, x=x)
 
     if normaliser == 0:
         return np.nan, np.nan
 
-    centroid = simps(x * yt, x)
+    centroid = simpson(x * yt, x=x)
 
     centroid /= normaliser
 
-    var = simps((x - centroid) ** 2 * yt, x) / normaliser
+    var = simpson((x - centroid) ** 2 * yt, x=x) / normaliser
 
     return centroid, np.sqrt(var)
 
@@ -56,12 +56,12 @@ def median(y, x=None, dx=1.0):
         Centroid and standard deviation of the data.
 
     """
-    yt = np.asfarray(y)
+    yt = np.asarray(y).astype(float, copy=False)
 
     if x is None:
         x = np.arange(yt.size, dtype="float") * dx
 
-    c = cumtrapz(yt, x=x, initial=0)
+    c = cumulative_trapezoid(yt, x=x, initial=0)
     c0 = c[0]
     cl = c[-1]
     c -= c0

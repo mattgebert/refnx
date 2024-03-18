@@ -1,4 +1,4 @@
-import os.path
+from pathlib import Path
 import json
 
 from qtpy import QtCore, QtGui, QtWidgets, uic
@@ -8,8 +8,8 @@ import periodictable as pt
 from refnx.reflect import LipidLeaflet, SLD
 
 
-pth = os.path.dirname(os.path.abspath(__file__))
-UI_LOCATION = os.path.join(pth, "ui")
+pth = Path(__file__).absolute().parent
+UI_LOCATION = pth / "ui"
 
 
 class LipidLeafletDialog(QtWidgets.QDialog):
@@ -17,16 +17,14 @@ class LipidLeafletDialog(QtWidgets.QDialog):
         # persistent lipid leaflet dlg
         QtWidgets.QDialog.__init__(self, parent)
         # load the GUI from the ui file
-        self.ui = uic.loadUi(
-            os.path.join(UI_LOCATION, "lipid_leaflet.ui"), self
-        )
+        self.ui = uic.loadUi(UI_LOCATION / "lipid_leaflet.ui", self)
 
         dvalidator = QtGui.QDoubleValidator(-2.0e-10, 5, 6)
         self.b_h_real.setValidator(dvalidator)
         self.b_h_imag.setValidator(dvalidator)
         self.b_t_real.setValidator(dvalidator)
         self.b_t_imag.setValidator(dvalidator)
-        with open(os.path.join(pth, "lipids.json"), "r") as f:
+        with open(pth / "lipids.json", "r") as f:
             lipids = json.load(f)
 
         self.lipids = {}
@@ -82,7 +80,7 @@ class LipidLeafletDialog(QtWidgets.QDialog):
             return
 
         lipid = self.lipids[name]
-        pixMap = QtGui.QPixmap(os.path.join(pth, "icons", lipid.name + ".png"))
+        pixMap = QtGui.QPixmap(str(pth / "icons" / f"{lipid.name}.png"))
         self._scene = QtWidgets.QGraphicsScene(self)
         self._scene.addPixmap(pixMap)
         self.chemical_structure.setScene(self._scene)
@@ -251,13 +249,16 @@ class Lipid:
 
     def __repr__(self):
         s = (
-            "Lipid({name!r}, {head_formula!r}, {tail_formula!r},"
-            " head_exchangable={head_exchangable!r},"
-            " tail_exchangable={tail_exchangable!r},"
-            " references={references!r},"
-            " conditions={conditions!r}, chemical_name={chemical_name!r}"
+            f"Lipid({self.name!r}, "
+            f"{self.head_formula!r}, "
+            f"{self.tail_formula!r}, "
+            f"head_exchangable={self.head_exchangable!r}, "
+            f"tail_exchangable={self.tail_exchangable!r}, "
+            f"references={self.references!r},"
+            f"conditions={self.conditions!r}, "
+            f"chemical_name={self.chemical_name!r}"
         )
-        return s.format(**self.__dict__)
+        return s
 
     def add_condition(self, descriptor, vh, vt):
         self.conditions[descriptor] = (vh, vt)

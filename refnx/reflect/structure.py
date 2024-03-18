@@ -20,11 +20,12 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THIS SOFTWARE.
 
 """
+
 # -*- coding: utf-8 -*-
 
 from collections import UserList
 import numbers
-import operator
+import operator as op
 
 import numpy as np
 from scipy.stats import norm
@@ -39,7 +40,7 @@ from refnx._lib import flatten
 from refnx.analysis import Parameters, Parameter, possibly_create_parameter
 from refnx.analysis.parameter import BaseParameter
 from refnx.reflect.interface import Interface, Erf, Step
-from refnx.reflect.reflect_model import get_reflect_backend
+from refnx.reflect.reflect_model import get_reflect_backend, SpinChannel
 
 # contracting the SLD profile can greatly speed a reflectivity calculation up.
 contract_by_area = refcalc._contract_by_area
@@ -161,6 +162,10 @@ class Structure(UserList):
         # the structure from that
         self.data = [c for c in components if isinstance(c, Component)]
 
+        # private attribute for future work. Users should not count on this
+        # staying around.
+        self._spin = None
+
     def __copy__(self):
         s = Structure(name=self.name, solvent=self._solvent)
         s.data = self.data.copy()
@@ -171,11 +176,11 @@ class Structure(UserList):
 
     def __str__(self):
         s = list()
-        s.append("{:_>80}".format(""))
-        s.append("Structure: {0: ^15}".format(str(self.name)))
-        s.append("solvent: {0}".format(repr(self._solvent)))
-        s.append("reverse structure: {0}".format(str(self.reverse_structure)))
-        s.append("contract: {0}\n".format(str(self.contract)))
+        s.append(f"{'':_>80}")
+        s.append(f"Structure: {self.name: ^15}")
+        s.append(f"solvent: {(self._solvent)!r}")
+        s.append(f"reverse structure: {self.reverse_structure}")
+        s.append(f"contract: {self.contract}\n")
 
         for component in self:
             s.append(str(component))
@@ -184,11 +189,11 @@ class Structure(UserList):
 
     def __repr__(self):
         return (
-            "Structure(components={data!r},"
-            " name={_name!r},"
-            " solvent={_solvent!r},"
-            " reverse_structure={_reverse_structure},"
-            " contract={contract})".format(**self.__dict__)
+            f"Structure(components={self.data!r},"
+            f" name={self._name!r},"
+            f" solvent={self._solvent!r},"
+            f" reverse_structure={self._reverse_structure},"
+            f" contract={self.contract})"
         )
 
     def append(self, item):
@@ -206,7 +211,7 @@ class Structure(UserList):
 
         if not isinstance(item, Component):
             raise ValueError(
-                "You can only add Component objects to a" " structure"
+                "You can only add Component objects to a structure"
             )
         super().append(item)
 
@@ -252,6 +257,14 @@ class Structure(UserList):
     @reverse_structure.setter
     def reverse_structure(self, reverse_structure):
         self._reverse_structure = reverse_structure
+
+    @classmethod
+    def from_slabs(cls, slabs):
+        s = []
+        for slab in slabs:
+            _slab = Slab(slab[0], complex(slab[1], slab[2]), slab[3])
+            s.append(_slab)
+        return cls(s)
 
     def slabs(self, **kwds):
         r"""
@@ -538,7 +551,7 @@ class Structure(UserList):
             align = int(align)
             if align >= len(slabs) - 1 or align < -1 * len(slabs):
                 raise RuntimeError(
-                    "abs(align) has to be less than " "len(slabs) - 1"
+                    "abs(align) has to be less than len(slabs) - 1"
                 )
             # to figure out the offset you need to know the cumulative distance
             # to the interface
@@ -621,7 +634,7 @@ class Structure(UserList):
         this structure.
 
         """
-        p = Parameters(name="Structure - {0}".format(self.name))
+        p = Parameters(name=f"Structure - {self.name}")
         p.extend([component.parameters for component in self.components])
         if self._solvent is not None:
             p.append(self.solvent.parameters)
@@ -782,7 +795,7 @@ class Scatterer:
 
     def __str__(self):
         sld = complex(self)
-        return "SLD = {0} x10**-6 Å**-2".format(sld)
+        return f"SLD = {sld} x10**-6 Å**-2"
 
     def __complex__(self):
         raise NotImplementedError
@@ -896,9 +909,7 @@ class SLD(Scatterer):
         self._parameters = Parameters(name=name)
 
     def __repr__(self):
-        return "SLD([{real!r}, {imag!r}]," " name={name!r})".format(
-            **self.__dict__
-        )
+        return f"SLD([{self.real!r}, {self.imag!r}], name={self.name!r})"
 
     def __complex__(self):
         sldc = complex(self.real.value, self.imag.value)
@@ -968,16 +979,12 @@ class MaterialSLD(Scatterer):
         self.dispersive = True
 
     def __repr__(self):
-        d = {
-            "compound": self._compound,
-            "density": self.density,
-            "wavelength": self.wavelength,
-            "probe": self.probe,
-            "name": self.name,
-        }
         return (
-            "MaterialSLD({compound!r}, {density!r}, probe={probe!r},"
-            " wavelength={wavelength!r}, name={name!r})".format(**d)
+            f"MaterialSLD({self._compound!r}, "
+            f"{self.density!r}, "
+            f"probe={self.probe!r}, "
+            f"wavelength={self.wavelength!r}, "
+            f"name={self.name!r})"
         )
 
     @property
@@ -1098,7 +1105,7 @@ class Component:
             The created Structure
         """
         # convert to integer, should raise an error if there's a problem
-        n = operator.index(n)
+        n = op.index(n)
         if n < 1:
             return Structure()
         elif n == 1:
@@ -1117,7 +1124,7 @@ class Component:
         :class:`refnx.analysis.Parameters` associated with this component
         """
         raise NotImplementedError(
-            "A component should override the parameters " "property"
+            "A component should override the parameters property"
         )
 
     @property
@@ -1188,7 +1195,7 @@ class Component:
         """
 
         raise NotImplementedError(
-            "A component should override the slabs " "property"
+            "A component should override the slabs property"
         )
 
     def logp(self):
@@ -1214,7 +1221,7 @@ class Slab(Component):
     thick : refnx.analysis.Parameter or float
         thickness of slab (Angstrom)
     sld : :class:`refnx.reflect.Scatterer`, complex, or float
-        (complex) SLD of film (/1e-6 Angstrom**2)
+        (complex) SLD of film (/1e-6 Angstrom**-2)
     rough : refnx.analysis.Parameter or float
         roughness on top of this slab (Angstrom)
     name : str
@@ -1311,7 +1318,7 @@ class MixedSlab(Component):
         thickness of slab (Angstrom)
     sld_list : sequence of {refnx.reflect.Scatterer, complex, float}
         Sequence of (complex) SLDs that are contained in film
-        (/1e-6 Angstrom**2)
+        (/1e-6 Angstrom**-2)
     vf_list : sequence of refnx.analysis.Parameter or float
         relative volume fractions of each of the materials contained in the
         film.
@@ -1482,7 +1489,7 @@ class Stack(Component, UserList):
                 self.data.append(c)
             else:
                 raise ValueError(
-                    "You can only initialise a Stack with" " Components"
+                    "You can only initialise a Stack with Components"
                 )
 
     def __setitem__(self, i, v):
@@ -1490,21 +1497,21 @@ class Stack(Component, UserList):
 
     def __str__(self):
         s = list()
-        s.append("{:=>80}".format(""))
+        s.append(f"{'' :=>80}")
 
         s.append(f"Stack start: {int(round(abs(self.repeats.value)))} repeats")
         for component in self:
             s.append(str(component))
         s.append("Stack finish")
-        s.append("{:=>80}".format(""))
+        s.append(f"{'' :=>80}")
 
         return "\n".join(s)
 
     def __repr__(self):
         return (
-            "Stack(name={name!r},"
-            " components={data!r},"
-            " repeats={repeats!r})".format(**self.__dict__)
+            f"Stack(name={self.name!r},"
+            f" components={self.data!r},"
+            f" repeats={self.repeats!r})"
         )
 
     def append(self, item):
@@ -1522,7 +1529,7 @@ class Stack(Component, UserList):
 
         if not isinstance(item, Component):
             raise ValueError(
-                "You can only add Component objects to a" " structure"
+                "You can only add Component objects to a structure"
             )
         self.data.append(item)
 
@@ -1591,7 +1598,7 @@ class Stack(Component, UserList):
         this structure.
 
         """
-        p = Parameters(name="Stack - {0}".format(self.name))
+        p = Parameters(name=f"Stack - {self.name}")
         p.append(self.repeats)
         p.extend([component.parameters for component in self.components])
         return p
@@ -1615,6 +1622,132 @@ class Stack(Component, UserList):
         else:
             raise ValueError()
         return self
+
+
+class _PolarisedSlab(Component):
+    """
+    A slab component has uniform SLD over its thickness.
+
+    Parameters
+    ----------
+    thick : refnx.analysis.Parameter or float
+        thickness of slab (Angstrom)
+    sld : :class:`refnx.reflect.Scatterer`, complex, or float
+        (complex) nuclear SLD of film (/1e-6 Angstrom**-2)
+    rough : refnx.analysis.Parameter or float
+        roughness on top of this slab (Angstrom)
+    rhoM : refnx.analysis.Parameter or float
+        magnetic SLD of film (/1e-6 Angstrom**-2)
+    thetaM : refnx.analysis.Parameter or float
+        Magnetic angle of the layer
+    name : str
+        Name of this slab
+    vfsolv : refnx.analysis.Parameter or float
+        Volume fraction of solvent [0, 1]
+    interface : {:class:`Interface`, None}, optional
+        The type of interfacial roughness associated with the Slab.
+        If `None`, then the default interfacial roughness is an Error
+        function (also known as Gaussian roughness).
+    """
+
+    def __init__(
+        self,
+        thick,
+        sld,
+        rough,
+        rhoM,
+        thetaM,
+        name="",
+        vfsolv=0,
+        interface=None,
+    ):
+        super().__init__(name=name)
+        self.thick = possibly_create_parameter(
+            thick, name=f"{name} - thick", units="Å"
+        )
+        if isinstance(sld, Scatterer):
+            self.sld = sld
+        else:
+            self.sld = SLD(sld)
+        self.rough = possibly_create_parameter(
+            rough, name=f"{name} - rough", units="Å"
+        )
+        self.vfsolv = possibly_create_parameter(
+            vfsolv, name=f"{name} - volfrac solvent", bounds=(0.0, 1.0)
+        )
+        self.rhoM = possibly_create_parameter(
+            rhoM,
+            name=f"{name} - rhoM",
+        )
+        self.thetaM = possibly_create_parameter(
+            thetaM,
+            name=f"{name} - thetaM",
+        )
+        self._parameters = Parameters(name=self.name)
+        self.interfaces = interface
+
+    def __repr__(self):
+        return (
+            f"Slab({self.thick!r}, {self.sld!r}, {self.rough!r},"
+            f" name={self.name!r}, vfsolv={self.vfsolv!r},"
+            f" rhoM={self.rhoM!r}, thetaM={self.thetaM!r}"
+            f" interface={self.interfaces!r})"
+        )
+
+    def __str__(self):
+        return str(self.parameters)
+
+    @property
+    def parameters(self):
+        """
+        :class:`refnx.analysis.Parameters` associated with this component
+
+        """
+        self._parameters.name = self.name
+        self._parameters.data = [
+            self.thick,
+            self.sld.parameters,
+            self.rough,
+            self.vfsolv,
+            self.rhoM,
+            self.thetaM,
+        ]
+        return self._parameters
+
+    def slabs(self, structure=None):
+        """
+        Slab representation of this component. See :class:`Component.slabs`
+        """
+        # speculative shortcut to prevent a number of attribute retrievals
+        if self.sld.dispersive:
+            sldc = self.sld.complex(getattr(structure, "wavelength", None))
+        else:
+            sldc = complex(self.sld)
+
+        mag_proj = self.rhoM.value * np.cos(np.degrees(self.thetaM.value))
+
+        if structure._spin in [SpinChannel.UP_UP, SpinChannel.UP_DOWN]:
+            _op = op.add
+        elif structure._spin in [SpinChannel.DOWN_UP, SpinChannel.DOWN_DOWN]:
+            _op = op.sub
+        else:
+            raise ValueError(
+                "Invalid spin state. Set Structure._spin to one of the"
+                " refnx.reflect.SpinChannel enumerations."
+            )
+
+        return np.array(
+            [
+                [
+                    self.thick.value,
+                    _op(sldc.real, mag_proj),
+                    sldc.imag,
+                    self.rough.value,
+                    self.vfsolv.value,
+                ]
+            ],
+            dtype=float,
+        )
 
 
 def _profile_slicer(z, sld_profile, slice_size=None):
@@ -1651,7 +1784,7 @@ def _profile_slicer(z, sld_profile, slice_size=None):
     final structures is on the order of fractions of a percent, with the
     largest difference around the critical edge.
     """
-    sld = np.asfarray(sld_profile, dtype=complex)
+    sld = np.asarray(sld_profile).astype(complex)
     if len(sld.shape) > 1 and sld.shape[1] == 2:
         sld[:, 0].imag = sld[:, 1].real
         sld = sld[:, 0]
@@ -1754,7 +1887,7 @@ def sld_profile(slabs, z=None, max_delta_z=None):
 
         zed = np.linspace(zstart, zend, num=npnts)
     else:
-        zed = np.asfarray(z)
+        zed = np.asarray(z).astype(float, copy=False)
 
     # the output array
     sld = np.ones_like(zed, dtype=float) * layers[0, 1]

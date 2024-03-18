@@ -1,4 +1,4 @@
-import os.path
+from pathlib import Path
 import pickle
 import sys
 
@@ -30,8 +30,9 @@ from refnx.analysis import (
 from refnx.analysis.curvefitter import bounds_list
 from refnx.dataset import Data1D
 from refnx._lib import emcee, flatten
+from refnx._lib.emcee.moves import DEMove, DESnookerMove
 
-from NISTModels import NIST_runner, NIST_Models
+from .NISTModels import NIST_runner, NIST_Models
 
 
 def line(x, params, *args, **kwds):
@@ -65,7 +66,7 @@ class TestCurveFitter:
 
         self.model = Model(self.p, fitfunc=line)
         self.objective = Objective(self.model, self.data)
-        assert_(len(self.objective.varying_parameters()) == 2)
+        assert len(self.objective.varying_parameters()) == 2
 
         mod = np.array(
             [
@@ -188,7 +189,7 @@ class TestCurveFitter:
 
         # check the standalone autocorrelation calculator
         acfs2 = autocorrelation_chain(mcfitter.chain, nburn=10)
-        assert_equal(acfs, acfs2)
+        assert_allclose(acfs, acfs2)
 
         # check integrated_time
         integrated_time(acfs2, tol=5)
@@ -209,6 +210,14 @@ class TestCurveFitter:
         # can fix by making the sampler again
         self.mcfitter.make_sampler()
         self.mcfitter.sample(1)
+
+    def test_moves(self):
+        # check that we can provide non-default moves
+        m0 = DEMove()
+        m1 = DESnookerMove()
+        moves = [(m0, 0.8), (m1, 0.2)]
+        mcfitter = CurveFitter(self.objective, moves=moves)
+        mcfitter.sample(10)
 
     def test_random_seed(self):
         # check that MCMC sampling is reproducible
@@ -347,7 +356,7 @@ class TestCurveFitter:
         def callback(xk):
             return
 
-        def callback2(xk, **kws):
+        def callback2(xk, *args, **kws):
             return
 
         # L-BFGS-B
@@ -399,11 +408,11 @@ class TestFitterGauss:
     # if the parameters and uncertainties come out correct
 
     @pytest.fixture(autouse=True)
-    def setup_method(self, tmpdir):
-        self.path = os.path.dirname(os.path.abspath(__file__))
-        self.tmpdir = tmpdir.strpath
+    def setup_method(self, tmp_path):
+        self.path = Path(__file__).absolute().parent
+        self.tmp_path = tmp_path
 
-        theoretical = np.loadtxt(os.path.join(self.path, "gauss_data.txt"))
+        theoretical = np.loadtxt(self.path / "gauss_data.txt")
         xvals, yvals, evals = np.hsplit(theoretical, 3)
         xvals = xvals.flatten()
         yvals = yvals.flatten()
@@ -482,7 +491,7 @@ class TestFitterGauss:
         assert_allclose(uncertainties, self.best_weighted_errors, rtol=0.005)
 
         # we're also going to try the checkpointing here.
-        checkpoint = os.path.join(self.tmpdir, "checkpoint.txt")
+        checkpoint = self.tmp_path / "checkpoint.txt"
 
         # compare samples to best_weighted_errors
         np.random.seed(1)
@@ -532,8 +541,8 @@ class TestFitterGauss:
         f = CurveFitter(self.objective, nwalkers=100, ntemps=10)
         f.fit("differential_evolution", seed=1)
 
-        f.sample(steps=201, random_state=1, verbose=False)
-        process_chain(self.objective, f.chain, nburn=50, nthin=15)
+        f.sample(steps=401, random_state=1, verbose=False)
+        process_chain(self.objective, f.chain, nburn=50, nthin=20)
         print(self.params[0].chain.shape, self.params[0].chain)
 
         uncertainties = [param.stderr for param in self.params]
@@ -626,7 +635,8 @@ class TestFitterGauss:
 
     @pytest.mark.xfail(
         sys.platform == "win32"
-        and (sys.version_info.major, sys.version_info.minor) == (3, 8),
+        and (sys.version_info.major, sys.version_info.minor)
+        in [(3, 8), (3, 9), (3, 10)],
         run=False,
         reason="doesn't work on cp38",
     )

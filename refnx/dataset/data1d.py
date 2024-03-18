@@ -1,9 +1,10 @@
 """"
 A basic representation of a 1D dataset
 """
-import os.path
+
 from pathlib import Path, PurePath
 import re
+import io
 
 import numpy as np
 from scipy._lib._util import check_random_state
@@ -104,18 +105,17 @@ class Data1D:
         return self.y.size
 
     def __str__(self):
-        return "<{0}>, {1} points".format(self.name, len(self))
+        return f"<{self.name}>, {len(self)} points"
 
     def __repr__(self):
         msk = self._mask
         if np.all(self._mask):
             msk = None
 
-        d = {"filename": self.filename, "msk": msk, "data": self.data}
         if self.filename is not None:
-            return "Data1D(data={filename!r}," " mask={msk!r})".format(**d)
+            return f"Data1D(data={str(self.filename)!r}, mask={msk!r})"
         else:
-            return "Data1D(data={data!r}," " mask={msk!r})".format(**d)
+            return f"Data1D(data={self.data!r}, mask={msk!r})"
 
     @property
     def x(self):
@@ -677,13 +677,24 @@ class Data1D:
 
         self.data = (x, y, y_err, x_err)
 
-        if hasattr(f, "read"):
-            fname = f.name
+        if hasattr(f, "read") and hasattr(f, "write"):
+            if hasattr(f, "name"):
+                # file-like ?
+                fname = f.name
+            else:
+                # BytesIO/ StringIO?
+                fname = ""
         else:
             fname = f
 
+        if isinstance(fname, PurePath):
+            # use a PurePath, not a system specific path type
+            # because Posix systems can't deal with WindowsPath
+            # and vice versa. This becomes an issue when pickling.
+            fname = PurePath(fname)
+
         self.filename = fname
-        self.name = os.path.splitext(os.path.basename(fname))[0]
+        self.name = Path(fname).stem
 
     def refresh(self):
         """
@@ -775,7 +786,7 @@ class Data1D:
         """
         if self._y_err is None:
             raise RuntimeError(
-                "Can't synthesise new dataset without y_err" "uncertainties"
+                "Can't synthesise new dataset without y_err uncertainties"
             )
 
         rng = check_random_state(random_state)

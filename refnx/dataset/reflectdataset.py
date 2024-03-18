@@ -3,7 +3,7 @@ import time
 import re
 
 # from datetime import datetime
-import os.path
+from pathlib import Path, PurePath
 
 try:
     import xml.etree.cElementTree as ET
@@ -103,13 +103,10 @@ class ReflectDataset(Data1D):
         if np.all(self._mask):
             msk = None
 
-        d = {"filename": self.filename, "msk": msk, "data": self.data}
         if self.filename is not None:
-            return "ReflectDataset(data={filename!r}," " mask={msk!r})".format(
-                **d
-            )
+            return f"ReflectDataset(data={str(self.filename)!r}, mask={msk!r})"
         else:
-            return "ReflectDataset(data={data!r}," " mask={msk!r})".format(**d)
+            return f"ReflectDataset(data={self.data!r}, mask={msk!r})"
 
     def save_xml(self, f, start_time=0):
         """
@@ -154,8 +151,12 @@ class ReflectDataset(Data1D):
             The file to load the spectrum from, or a str that specifies the
             file name
         """
-        if hasattr(f, "name"):
-            fname = f.name
+        if hasattr(f, "read") and hasattr(f, "write"):
+            if hasattr(f, "name"):
+                # file-like ?
+                fname = f.name
+            else:
+                fname = ""
         else:
             fname = f
         try:
@@ -173,8 +174,14 @@ class ReflectDataset(Data1D):
             drvals = [float(val) for val in drtext if len(val)]
             dqvals = [float(val) for val in dqtext if len(val)]
 
+            if isinstance(fname, PurePath):
+                # use a PurePath, not a system specific path type
+                # because Posix systems can't deal with WindowsPath
+                # and vice versa. This becomes an issue when pickling.
+                fname = PurePath(fname)
+
             self.filename = fname
-            self.name = os.path.splitext(os.path.basename(fname))[0]
+            self.name = Path(fname).stem
             self.data = (qvals, rvals, drvals, dqvals)
         except ET.ParseError:
             super().load(fname)
@@ -225,8 +232,12 @@ class OrsoDataset(Data1D):
             The file to load the spectrum from, or a str/Path that specifies
             the file name
         """
-        if hasattr(f, "name"):
-            fname = f.name
+        if hasattr(f, "read") and hasattr(f, "write"):
+            if hasattr(f, "name"):
+                # file-like ?
+                fname = f.name
+            else:
+                fname = ""
         else:
             fname = f
 
@@ -241,4 +252,4 @@ class OrsoDataset(Data1D):
 
         self.data = _data
         self.filename = fname
-        self.name = os.path.splitext(os.path.basename(fname))[0]
+        self.name = Path(fname).stem

@@ -5,6 +5,7 @@ Batch reduction of reflectometry data based on a spreadsheet
 """
 import collections
 import numpy as np
+import os
 import os.path
 import pandas as pd
 import pickle
@@ -486,8 +487,8 @@ class BatchReducer:
         all_runs.insert(0, "source", all_runs.index + 2)
 
         # add in some extra columns to indicate successful reduction
-        all_runs["reduced"] = np.zeros(len(all_runs))
-        all_runs["filename"] = np.zeros(len(all_runs))
+        all_runs = all_runs.assign(reduced=False)
+        all_runs = all_runs.assign(filename="")
         return all_runs
 
     def select_runs(self, all_runs):

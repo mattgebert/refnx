@@ -1,6 +1,6 @@
 import string
 from copy import deepcopy
-import os.path
+from pathlib import Path
 from time import gmtime, strftime
 from multiprocessing import Queue
 from threading import Thread
@@ -18,14 +18,18 @@ from refnx.reduce.platypusnexus import (
     SpatzNexus,
     ReductionOptions,
     calculate_wavelength_bins,
+    create_reflect_nexus,
 )
 from refnx.util import ErrorProp as EP
+import refnx.util._resolution_kernel as rk
+from refnx.reduce._tof_simulator import SpectrumDist
 import refnx.util.general as general
 from refnx.reduce.parabolic_motion import (
     parabola_line_intersection_point,
     find_trajectory,
 )
-from refnx.dataset import ReflectDataset
+from refnx.dataset import ReflectDataset, Data1D
+from refnx.dataset.data1d import _data1D_to_hdf
 from refnx._lib import possibly_open_file
 
 
@@ -52,9 +56,9 @@ spin="UNPOLARISED" dim="$_numpointsz:$_numpointsy">
 
 class ReflectReduce:
     def __init__(self, direct, prefix, data_folder=None):
-        self.data_folder = os.path.curdir
+        self.data_folder = Path.cwd()
         if data_folder is not None:
-            self.data_folder = data_folder
+            self.data_folder = Path(data_folder)
 
         if prefix == "PLP":
             self.reflect_klass = PlatypusNexus
@@ -62,17 +66,16 @@ class ReflectReduce:
             self.reflect_klass = SpatzNexus
         else:
             raise ValueError(
-                "Instrument prefix not known. Must be one of" " ['PLP']"
+                "Instrument prefix not known. Must be one of ['PLP', 'SPZ']"
             )
 
         if isinstance(direct, ReflectNexus):
             self.direct_beam = direct
         elif type(direct) is str:
-            direct = os.path.join(self.data_folder, direct)
+            direct = self.data_folder / direct
             self.direct_beam = self.reflect_klass(direct)
         else:
             self.direct_beam = self.reflect_klass(direct)
-
         self.prefix = prefix
 
     def __call__(self, reflect, scale=1.0, save=True, **reduction_options):
@@ -167,6 +170,31 @@ class ReflectReduce:
         reflect_keywords = reduction_options.copy()
         direct_keywords = reduction_options.copy()
 
+        # spectrum_dist is a callable that returns a probability distribution
+        # for the wavelength distribution.
+        detailed_kernel = reflect_keywords.get("detailed_kernel", False)
+        if detailed_kernel and not hasattr(self, "_spectrum_dist"):
+            _direct = False
+            if isinstance(self.direct_beam, PlatypusNexus):
+                _direct = True
+
+            q, i, di = self.direct_beam.process(
+                normalise=False,
+                normalise_bins=False,
+                rebin_percent=0.5,
+                lo_wavelength=0.5,
+                hi_wavelength=25.0,
+                direct=_direct,
+            )
+            q = np.clip(q, 0.5, 25).squeeze()
+            i = i.squeeze()
+            _sd = SpectrumDist(q, i)
+
+            def _spectrum_dist(x):
+                return _sd.pdf(x)
+
+            self._spectrum_dist = _spectrum_dist
+
         # get the direct beam spectrum
         if isinstance(self, PlatypusReduce):
             direct_keywords["direct"] = True
@@ -195,7 +223,7 @@ class ReflectReduce:
         if isinstance(reflect, ReflectNexus):
             self.reflected_beam = reflect
         elif type(reflect) is str:
-            reflect = os.path.join(self.data_folder, reflect)
+            reflect = self.data_folder / reflect
             self.reflected_beam = self.reflect_klass(reflect)
         else:
             self.reflected_beam = self.reflect_klass(reflect)
@@ -267,6 +295,38 @@ class ReflectReduce:
             self.reflected_beam.m_lambda[:, :, np.newaxis],
         )
 
+        if detailed_kernel:
+            res_kernels = []
+
+            for i in range(self.n_spectra):
+                cat = self.reflected_beam.cat
+                p_theta = rk.P_Theta(
+                    cat.ss_coll1[i],
+                    cat.ss_coll2[i],
+                    cat.collimation_distance[0],
+                )
+                da = reflect_keywords.get("rebin_percent", 1.0) / 100.0
+                pa, _ = self.reflected_beam.phase_angle(i)
+
+                chod, d_cx = self.reflected_beam.chod(scanpoint=i)
+                p_lambda = rk.P_Wavelength(
+                    d_cx,
+                    chod,
+                    cat.frequency[i],
+                    cat.ss_coll1[i],
+                    xsi=pa,
+                    da=da,
+                )
+                res_kernel = rk.resolution_kernel(
+                    p_theta,
+                    p_lambda,
+                    self.omega_corrected[i],
+                    self.reflected_beam.m_lambda[i],
+                    spectrum=self._spectrum_dist,
+                    npnts=51,
+                )
+                res_kernels.append(res_kernel)
+
         reduction = {}
         reduction["x"] = self.x = xdata
         reduction["x_err"] = self.x_err = xdata_sd
@@ -280,16 +340,16 @@ class ReflectReduce:
         reduction["m_lambda"] = self.reflected_beam.m_lambda
         reduction["nspectra"] = self.n_spectra
         reduction["start_time"] = self.reflected_beam.start_time
-        reduction[
-            "datafile_number"
-        ] = self.datafile_number = self.reflected_beam.datafile_number
+        reduction["datafile_number"] = self.datafile_number = (
+            self.reflected_beam.datafile_number
+        )
         reduction["direct_beam"] = self.direct_beam
         reduction["reflected_beam"] = self.reflected_beam
 
         fnames = []
         datasets = []
-        datafilename = self.reflected_beam.datafilename
-        datafilename = os.path.basename(datafilename.split(".nx.hdf")[0])
+        datafilename = Path(self.reflected_beam.datafilename).name
+        datafilename = datafilename.split(".nx.hdf")[0]
 
         header = self._create_metadata_header()
 
@@ -304,9 +364,18 @@ class ReflectReduce:
                 with open(fname, "wb") as f:
                     dataset.save(f, header=header)
 
-                fname = f"{datafilename}_{i}.xml"
-                with open(fname, "wb") as f:
-                    dataset.save_xml(f, start_time=reduction["start_time"][i])
+                if detailed_kernel:
+                    _d = list(dataset.data)
+                    _d[-1] = res_kernels[i]
+                    _data = Data1D(_d)
+                    _data.sort()
+                    fname = f"{datafilename}_{i}.hdf"
+                    _data1D_to_hdf(fname, Data1D(_data))
+
+                # fname = f"{datafilename}_{i}.xml"
+                # with open(fname, "wb") as f:
+                #     dataset.save_xml(f, start_time=reduction["start_time"][i])
+
         reduction["fname"] = fnames
         return datasets, deepcopy(reduction)
 
@@ -369,28 +438,24 @@ class ReflectReduce:
         self.y_err /= scale
 
     def write_offspecular(self, f, scanpoint=0):
-        d = dict()
-        d["time"] = strftime("%a, %d %b %Y %H:%M:%S +0000", gmtime())
-        d["_rnumber"] = self.reflected_beam.datafile_number
-        d["_numpointsz"] = np.size(self.m_ref, 1)
-        d["_numpointsy"] = np.size(self.m_ref, 2)
+        """
+        Writes reduced offspecular data to a file
 
-        s = string.Template(_template_ref_xml)
+        Parameters
+        ----------
+        f : {str, filehandle}
+            Uses `np.savez` to save data. When loading these files you can use
+            `npzfile = np.load(outfile); m_qz = npzfile['m_qz']`
 
-        # filename = 'off_PLP{:07d}_{:d}.xml'.format(self._rnumber, index)
-        d["_r"] = repr(self.m_ref[scanpoint].tolist()).strip(",[]")
-        d["_qz"] = repr(self.m_qz[scanpoint].tolist()).strip(",[]")
-        d["_dr"] = repr(self.m_ref_err[scanpoint].tolist()).strip(",[]")
-        d["_qx"] = repr(self.m_qx[scanpoint].tolist()).strip(",[]")
-
-        thefile = s.safe_substitute(d)
-
-        with possibly_open_file(f, "wb") as g:
-            if "b" in g.mode:
-                thefile = thefile.encode("utf-8")
-
-            g.write(thefile)
-            g.truncate()
+        scanpoint : int
+        """
+        np.savez(
+            f,
+            m_qz=self.m_qz[scanpoint],
+            m_qx=self.m_qx[scanpoint],
+            m_ref=self.m_ref[scanpoint],
+            m_ref_err=self.m_ref_err[scanpoint],
+        )
 
     def _create_metadata_header(self):
         header = []
@@ -914,10 +979,8 @@ class PolarisedReduce:
                 # now write out the corrected reflectivity files
                 fnames = []
                 datasets = []
-                datafilename = reducer.reflected_beam.datafilename
-                datafilename = os.path.basename(
-                    datafilename.split(".nx.hdf")[0]
-                )
+                datafilename = Path(reducer.reflected_beam.datafilename).name
+                datafilename = datafilename.split(".nx.hdf")[0]
 
                 for i in range(np.size(reducer.y_corr, 0)):
                     data = reducer.data(scanpoint=i)
@@ -1188,7 +1251,7 @@ def reduce_stitch(
         708 corresponds to the file PLP0000708.nx.hdf.
     direct_list : list
         Direct beam run numbers, e.g. `[711, 711, 711]`
-    data_folder : str, optional
+    data_folder : {str, Path}, optional
         Where is the raw data stored?
     prefix : str, optional
         The instrument filename prefix.
@@ -1249,7 +1312,9 @@ def reduce_stitch(
     combined_dataset = ReflectDataset()
 
     if data_folder is None:
-        data_folder = os.getcwd()
+        data_folder = Path.cwd()
+    else:
+        data_folder = Path(data_folder)
 
     if prefix == "PLP":
         reducer_klass = PlatypusReduce
@@ -1259,12 +1324,8 @@ def reduce_stitch(
         raise ValueError("Incorrect prefix specified")
 
     for index, val in enumerate(zipped):
-        reflect_datafile = os.path.join(
-            data_folder, number_datafile(val[0], prefix=prefix)
-        )
-        direct_datafile = os.path.join(
-            data_folder, number_datafile(val[1], prefix=prefix)
-        )
+        reflect_datafile = data_folder / number_datafile(val[0], prefix=prefix)
+        direct_datafile = data_folder / number_datafile(val[1], prefix=prefix)
 
         reducer = reducer_klass(direct_datafile)
         datasets, fnames = reducer.reduce(
@@ -1287,12 +1348,13 @@ def reduce_stitch(
         # now chop off .nx.hdf extension
         fname = basename_datafile(fname)
 
-        fname_dat = "c_{0}.dat".format(fname)
+        fname_dat = f"c_{fname}.dat"
         with open(fname_dat, "wb") as f:
             combined_dataset.save(f)
-        fname_xml = "c_{0}.xml".format(fname)
-        with open(fname_xml, "wb") as f:
-            combined_dataset.save_xml(f)
+
+        # fname_xml = "c_{0}.xml".format(fname)
+        # with open(fname_xml, "wb") as f:
+        #     combined_dataset.save_xml(f)
 
     return combined_dataset, fname_dat
 
@@ -1369,7 +1431,7 @@ class AutoReducer:
         for direct_beam, ro, scale_factor in zipped:
             rn = self.reflect_klass(direct_beam)
             db = self.redn_klass(rn)
-            fname = os.path.basename(rn.cat.filename)
+            fname = Path(rn.cat.filename).name
             self.direct_beams[fname] = {
                 "reflectnexus": rn,
                 "reducer": db,
@@ -1405,7 +1467,7 @@ class AutoReducer:
                 event = self.queue.get()
                 # print(event.src_path)
                 rb = self.reflect_klass(event.src_path)
-                fname = os.path.basename(rb.cat.filename)
+                fname = Path(rb.cat.filename).name
                 db = self.match_direct_beam(rb)
 
                 if db is not None:

@@ -11,6 +11,7 @@ without dependencies.
 
 VENDORED Aug2017
 """
+
 import numpy as np
 
 
@@ -29,7 +30,7 @@ def _get_epsilon(x, s, epsilon, n):
             h = np.asarray(epsilon)
             if h.shape != x.shape:
                 raise ValueError(
-                    "If h is not a scalar it must have the same" " shape as x."
+                    "If h is not a scalar it must have the same shape as x."
                 )
     return h
 

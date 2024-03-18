@@ -1,8 +1,6 @@
 import io
 import os
-import os.path
 from pathlib import Path
-import glob
 import argparse
 import re
 import shutil
@@ -34,6 +32,7 @@ from refnx.reduce.event import (
 )
 from refnx.reduce.rebin import rebin, rebin_along_axis
 from refnx._lib import possibly_open_file
+from refnx.reflect import SpinChannel
 
 
 EXTENT_MULT = 2
@@ -111,7 +110,8 @@ def catalogue(start, stop, data_folder=None, prefix="PLP", keys=None):
     if data_folder is None:
         data_folder = "."
 
-    files = glob.glob(os.path.join(data_folder, prefix + "*.nx.hdf"))
+    files = Path(data_folder).glob(f"{prefix}*.nx.hdf")
+    files = list(files)
     files.sort()
     files = [
         file
@@ -161,8 +161,8 @@ class Catalogue:
         self.prefix = None
 
         d = {}
-        file_path = os.path.realpath(h5d.filename)
-        d["path"] = os.path.dirname(file_path)
+        file_path = Path(h5d.filename).resolve()
+        d["path"] = Path(file_path).parent
         d["filename"] = h5d.filename
         try:
             d["end_time"] = h5d["entry1/end_time"][0]
@@ -487,9 +487,9 @@ class PlatypusCatalogue(Catalogue):
         except KeyError:
             # older PLP files didn't have y_pixels_per_mm, so use built in
             # value
-            warnings.warn(
-                "Setting default pixel size to 1.177", RuntimeWarning
-            )
+            # warnings.warn(
+            #     "Setting default pixel size to 1.177", RuntimeWarning
+            # )
             d["qz_pixel_size"] = np.array([1.177])
 
     def _chopper_values(self, h5data):
@@ -667,17 +667,6 @@ class PolarisedCatalogue(PlatypusCatalogue):
             self.is_magnet = False
 
 
-class SpinChannel(Enum):
-    """
-    Describes the incident and scattered spin state of a polarised neutron beam.
-    """
-
-    UP_UP = (1, 1)
-    UP_DOWN = (1, 0)
-    DOWN_UP = (0, 1)
-    DOWN_DOWN = (0, 0)
-
-
 class SpinSet(object):
     """
     Describes a set of spin-channels at a given angle of incidence,
@@ -819,9 +808,11 @@ class SpinSet(object):
         if the spin channel was measured.
         """
         return [
-            self.channels[sc].spin_state.value
-            if self.channels[sc] is not None
-            else None
+            (
+                self.channels[sc].spin_state.value
+                if self.channels[sc] is not None
+                else None
+            )
             for sc in self.channels
         ]
 
@@ -922,7 +913,7 @@ def basename_datafile(pth):
     'c'
     """
 
-    basename = os.path.basename(pth)
+    basename = Path(pth).name
     return basename.split(".nx.hdf")[0]
 
 
@@ -954,7 +945,7 @@ def number_datafile(run_number, prefix="PLP"):
     try:
         num = abs(int(run_number))
         # you got given a run number
-        return "{0}{1:07d}.nx.hdf".format(prefix, num)
+        return f"{prefix}{num:07d}.nx.hdf"
     except ValueError:
         # you may have been given full filename
         if run_number.endswith(".nx.hdf"):
@@ -986,7 +977,7 @@ def datafile_number(fname, prefix="PLP"):
     rstr = ".*" + prefix + "([0-9]{7}).nx.hdf"
     regex = re.compile(rstr)
 
-    _fname = os.path.basename(fname)
+    _fname = Path(fname).name
     r = regex.search(_fname)
 
     if r:
@@ -1069,7 +1060,9 @@ class ReductionOptions(dict):
            use the automatic beam finder, falling back to
            `manual_beam_find` if it's provided.
         - (float, float)
-           specify the peak and peak standard deviation.
+           specify the peak and peak standard deviation. The peak standard
+           deviation is used to calculate the width of the foreground region,
+           unless `lopx_hipx` is specified.
 
     peak_pos_tol : None or (float, float)
         Convergence tolerance for the beam position and width to be
@@ -1122,6 +1115,11 @@ class ReductionOptions(dict):
         contains the frame number for each neutron, landing at position
         `x_events, y_events` on the detector, with time-of-flight
         `t_events`.
+    detailed_kernel : bool
+        whether a detailed resolution kernel is calculating during reduction.
+    lopx_hipx : tuple
+        A two-tuple specifying the foreground region. For example, use of
+        (120, 123) would use pixels 120, 121, 122, 123.
     """
 
     def __init__(
@@ -1145,6 +1143,8 @@ class ReductionOptions(dict):
         normalise_bins=True,
         manual_beam_find=None,
         event_filter=None,
+        detailed_kernel=False,
+        lopx_hipx=None,
     ):
         super().__init__()
         self["h5norm"] = h5norm
@@ -1166,6 +1166,8 @@ class ReductionOptions(dict):
         self["normalise_bins"] = normalise_bins
         self["manual_beam_find"] = manual_beam_find
         self["event_filter"] = event_filter
+        self["detailed_kernel"] = detailed_kernel
+        self["lopx_hipx"] = lopx_hipx
 
 
 class ReflectNexus:
@@ -1280,7 +1282,7 @@ class ReflectNexus:
         dlmda = m_lambda_fwhm[:, sorted]
         dr = m_spec_sd[:, sorted]
         d["n_spectra"] = self.processed_spectrum["n_spectra"]
-        d["runnumber"] = "PLP{:07d}".format(self.cat.datafile_number)
+        d["runnumber"] = f"{self.prefix}{self.cat.datafile_number:07d}"
 
         d["r"] = repr(r[scanpoint].tolist()).strip(",[]")
         d["dr"] = repr(dr[scanpoint].tolist()).strip(",[]")
@@ -1475,12 +1477,14 @@ class ReflectNexus:
             deviation.
 
             - -1
-               use `manual_beam_find`.
+                use `manual_beam_find`.
             - None
-               use the automatic beam finder, falling back to
+                use the automatic beam finder, falling back to
                `manual_beam_find` if it's provided.
             - (float, float)
-               specify the peak and peak standard deviation.
+                specify the peak and peak standard deviation. The peak standard
+                deviation is used to calculate the width of the foreground
+                region, unless `lopx_hipx` is specified.
 
         peak_pos_tol : (float, float) or None
             Convergence tolerance for the beam position and width to be
@@ -1533,6 +1537,15 @@ class ReflectNexus:
             contains the frame number for each neutron, landing at position
             `x_events, y_events` on the detector, with time-of-flight
             `t_events`.
+        detailed_kernel : bool
+            whether a detailed resolution kernel is calculating during reduction.
+        lopx_hipx : tuple
+            A two-tuple specifying the foreground region for integration of the
+            specular ridge. For example, use of (120, 123) would sum pixels
+            120, 121, 122, 123.
+            If specified this keyword overrides the specular width calculated
+            from the peak standard deviation calculated (or specified) in
+            `peak_pos`. The peak centre must lie between ``lopx`` and ``hipx``.
 
         Notes
         -----
@@ -1591,6 +1604,7 @@ class ReflectNexus:
         normalise_bins = options["normalise_bins"]
         manual_beam_find = options["manual_beam_find"]
         event_filter = options["event_filter"]
+        lopx_hipx = options["lopx_hipx"]
 
         # it can be advantageous to save processing time if the arguments
         # haven't changed
@@ -1707,10 +1721,8 @@ class ReflectNexus:
             """
             estimated beam width in pixels at detector
             """
-            estimated_beam_width[idx] = self.estimated_beam_width_at_detector(
-                scanpoint
-            )
-
+            v = self.estimated_beam_width_at_detector(scanpoint)
+            estimated_beam_width[idx] = np.squeeze(v)
             """
             work out the total flight length
             IMPORTANT: this varies as a function of twotheta. This is
@@ -1723,7 +1735,8 @@ class ReflectNexus:
             if twotheta is None:
                 twotheta = cat.twotheta[scanpoint]
             output = self.chod(omega, twotheta, scanpoint=scanpoint)
-            flight_distance[idx], d_cx[idx] = output
+            flight_distance[idx] = np.squeeze(output[0])
+            d_cx[idx] = output[1]
 
             # calculate nominal phase openings
             phase_angle[idx], master_opening = self.phase_angle(scanpoint)
@@ -1785,7 +1798,7 @@ class ReflectNexus:
         if peak_pos == -1:
             # you always want to find the beam manually
             ret = manual_beam_find(
-                detector, detector_sd, os.path.basename(cat.filename)
+                detector, detector_sd, Path(cat.filename).name
             )
             beam_centre, beam_sd, lopx, hipx, bp = ret
 
@@ -1812,7 +1825,7 @@ class ReflectNexus:
                 detector_sd,
                 tol=(atol, rtol),
                 manual_beam_find=manual_beam_find,
-                name=os.path.basename(cat.filename),
+                name=Path(cat.filename).name,
             )
             beam_centre, beam_sd, lopx, hipx, full_backgnd_mask = ret
         else:
@@ -1828,16 +1841,30 @@ class ReflectNexus:
         lopx = lopx.astype(int)
         hipx = hipx.astype(int)
 
+        if lopx_hipx is not None:
+            print(lopx_hipx)
+            lopx = np.ones(n_spectra, dtype=int) * int(lopx_hipx[0])
+            hipx = np.ones(n_spectra, dtype=int) * int(lopx_hipx[1])
+            for i in range(n_spectra):
+                try:
+                    assert lopx[i] <= beam_centre[i] <= hipx[i]
+                except AssertionError:
+                    raise RuntimeError(
+                        "One of the beam centres does not lie in the"
+                        " manually specified lopx/hipx region."
+                    )
+
         # Warning if the beam appears to be much broader than the divergence
         # would predict. The use of 30% tolerance is a guess. This might happen
         # if the beam finder includes incoherent background region by mistake.
-        if not np.allclose(estimated_beam_width, hipx - lopx + 1, rtol=0.3):
-            warnings.warn(
-                "The foreground width (%s) estimate"
-                " does not match the divergence of the beam (%s)."
-                " Consider checking with manual beam finder."
-                % (str(hipx - lopx + 1), str(estimated_beam_width))
-            )
+
+        # if not np.allclose(estimated_beam_width, hipx - lopx + 1, rtol=0.3):
+        #     warnings.warn(
+        #         "The foreground width (%s) estimate"
+        #         " does not match the divergence of the beam (%s)."
+        #         " Consider checking with manual beam finder."
+        #         % (str(hipx - lopx + 1), str(estimated_beam_width))
+        #     )
 
         if np.size(beam_centre) != n_spectra:
             raise RuntimeError(
@@ -1941,6 +1968,17 @@ class ReflectNexus:
                 detector, detector_sd, full_backgnd_mask
             )
 
+        # assert that none of the lopx/hipx regions overlap with the
+        # background mask
+        msk = np.sum(full_backgnd_mask, axis=0)  # (N, T, Y) -> (T, Y)
+        msk = np.sum(msk, axis=0)  # (T, Y) -> (Y,)
+        msk = np.sum(msk[lopx[0] : hipx[0] + 1])
+        if msk > 0:
+            raise RuntimeError(
+                "At some point the background mask overlaps with the"
+                " foreground region"
+            )
+
         """
         top and tail the specular beam with the known beam centres.
         All this does is produce a specular intensity with shape (N, T),
@@ -2010,7 +2048,7 @@ class ReflectNexus:
         d["datafile_number"] = cat.datafile_number
 
         if h5norm is not None:
-            if type(h5norm) == h5py.File:
+            if isinstance(h5norm, h5py.File):
                 d["normfilename"] = h5norm.filename
             else:
                 d["normfilename"] = h5norm
@@ -2137,11 +2175,11 @@ class ReflectNexus:
         if event_folder is not None:
             _eventpath = event_folder
 
-        stream_filename = os.path.join(
-            _eventpath,
-            event_directory_name,
-            f"DATASET_{scanpoint}",
-            "EOS.bin",
+        stream_filename = (
+            Path(_eventpath)
+            / event_directory_name
+            / f"DATASET_{scanpoint}"
+            / "EOS.bin"
         )
 
         with io.open(stream_filename, "rb") as f:
@@ -2149,7 +2187,9 @@ class ReflectNexus:
             loaded_events, end_events = events(f, max_frames=last_frame)
 
         # convert frame_bins to list of filter frames
-        frames = framebins_to_frames(np.asfarray(frame_bins) * frequency)
+        frames = framebins_to_frames(
+            np.asarray(frame_bins).astype(float, copy=False) * frequency
+        )
 
         if event_filter is not None:
             output = event_filter(loaded_events, t_bins, y_bins, x_bins)
@@ -2386,10 +2426,11 @@ class PlatypusNexus(ReflectNexus):
             # as such you need to decrease their tof by increasing the
             # t_offset
             master_corr = -np.degrees(np.arctan(h_c1 / DISCRADIUS))
-            corr_t_offset[i] += (master_phase_offset + master_corr) / (
+            _offset = (master_phase_offset + master_corr) / (
                 2.0 * 360.0 * freq
             )
-            corr_t_offset[i] -= (phase_angle + angle_corr) / (360 * 2 * freq)
+            _offset -= (phase_angle + angle_corr) / (360 * 2 * freq)
+            corr_t_offset[i] += np.squeeze(_offset)
         corr_t_offset *= 1e6
 
         return corr_t_offset
@@ -2549,7 +2590,6 @@ class PlatypusNexus(ReflectNexus):
                 chod += cat.dy[scanpoint] / np.cos(np.radians(twotheta - 4.8))
             else:
                 chod += cat.dy[scanpoint] / np.cos(np.radians(4.8 - twotheta))
-
         return chod, d_cx
 
 
@@ -3300,11 +3340,11 @@ def accumulate_HDF_files(files):
     if not pth:
         raise ValueError("All files must refer to an hdf5 file")
 
-    new_name = "ADD_" + os.path.basename(pth)
+    new_name = "ADD_" + Path(pth).name
 
-    shutil.copy(pth, os.path.join(os.getcwd(), new_name))
+    shutil.copy(pth, Path(".") / new_name)
 
-    master_file = os.path.join(os.getcwd(), new_name)
+    master_file = Path(".") / new_name
     with h5py.File(master_file, "r+") as h5master:
         # now go through each file and accumulate numbers:
         for file in files[1:]:
@@ -3329,11 +3369,11 @@ def accumulate_HDF_files(files):
 def _check_HDF_file(h5data):
     # If a file is an HDF5 file, then return the filename.
     # otherwise return False
-    if type(h5data) == h5py.File:
+    if isinstance(h5data, h5py.File):
         return h5data.filename
     else:
         with h5py.File(h5data, "r") as h5data:
-            if type(h5data) == h5py.File:
+            if isinstance(h5data, h5py.File):
                 return h5data.filename
 
     return False
@@ -3362,7 +3402,7 @@ def _possibly_open_hdf_file(f, mode="r"):
         this context manager.
     """
     close_file = False
-    if type(f) == h5py.File:
+    if isinstance(f, h5py.File):
         g = f
     else:
         g = h5py.File(f, mode)
@@ -3437,8 +3477,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     for file in args.file_list:
-        fname = "PLP%07d.nx.hdf" % file
-        path = os.path.join(args.bdir, fname)
+        fname = f"PLP{file:07d}.nx.hdf"
+        path = Path(args.bdir) / fname
         try:
             a = PlatypusNexus(path)
             a.process(
@@ -3450,7 +3490,7 @@ if __name__ == "__main__":
             )
 
             fname = "PLP%07d.spectrum" % file
-            out_fname = os.path.join(args.bdir, fname)
+            out_fname = path / fname
 
             integrate = args.integrate
             if args.integrate < 0:

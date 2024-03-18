@@ -493,3 +493,68 @@ in 0.1.13.
 - rudimentary HDF <-> Data1D interconversion. This is functionality that might
   be subject to change, so the functions are prefixed by "_".
 - added TOF simulation to reduction code.
+- print out the fitting statistic in a tqdm progress bar.
+
+0.1.37
+------
+- automated the release to PyPI via Github Actions.
+- removed setup.cfg, transferring all information to pyproject.toml.
+- fixed various scipy DeprecationWarnings related to keyword only arguments.
+- converted various os.path to pathlib.Path
+- stopped writing xml output (nobody uses it?)
+- added detailed resolution kernel calculation (writes out an HDF file).
+  Refactor detailed kernel calculator.
+- removed np.asfarray usage, it's deprecated.
+- updated emcee vendored code.
+- silence RuntimeWarning if the foreground width is found to be wider than
+  predicted.
+- fix pandas warnings in batchreduction.
+- wholesale conversion of os.path to pathlib.Path. Hopefully not too many
+  bugs introduced as a result of this.
+
+0.1.38
+------
+- allow detailed Q resolution kernel to work with q_offset.
+- added lopx_hipx to ReductionOptions to allow one to specify the foreground
+  region.
+- fix path concatenation issue in reduce_stitch, str or Path should be allowed.
+
+0.1.40
+------
+- remove roadblocks for building wheels for cp312.
+- update vendored emcee.
+- change str.format to f-strings.
+
+0.1.41
+------
+- bump minimum Python version to 3.9.
+- remove oldest-supported-numpy from list of build requirements.
+- add "numba_parratt" reflectometry kernel. If numba is installed this kernel
+  has greater calculation speed (in calculating the reflectivity) under some
+  circumstances.
+- fixed bug when exporting parameters from refnx GUI.
+- use optionally installed black to format code fragment exported from refnx
+  GUI.
+- update jax reflectivity kernel to fix deprecated functions.
+
+0.1.42
+------
+- scale log-prior in log-posterior calculation using a multiplier. This allows
+  one to balance relative size of likelihood and prior.
+- added Structure.from_slabs classmethod.
+- fixed bug when trying to print a Parameter.
+
+0.1.43
+------
+- Store the fname as a PurePath in Data1D. This is because pickled datafiles
+  from one OS may not be unpickleable on another OS. e.g. Posix can't unpickle
+  WindowsPath and vice versa.
+- modified `util.general.neutron_transmission` to be able to select which cross
+  sections are used for transmission calculation.
+- We revised the ReflectReduce.write_offspecular to output an ascii file with 
+  four columns, qz,qx,m_ref, m_ref_err.
+- ReflectModelTL added. Carries out reflectivity for wavelength dependent
+  scattering length density profiles.
+
+0.1.44
+------

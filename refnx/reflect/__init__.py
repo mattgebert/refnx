@@ -2,6 +2,7 @@ import os
 
 from refnx.reflect.reflect_model import (
     ReflectModel,
+    ReflectModelTL,
     reflectivity,
     MixedReflectModel,
     FresnelTransform,
@@ -9,6 +10,7 @@ from refnx.reflect.reflect_model import (
     use_reflect_backend,
     available_backends,
     abeles,
+    SpinChannel,
 )
 from refnx.reflect.structure import (
     Structure,
@@ -41,6 +43,14 @@ from refnx.reflect._app import gui, main
 # libraries to be loaded.
 # OMP
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "True")
+
+try:
+    import numba
+
+    # set the threading layer before any parallel target compilation
+    numba.config.THREADING_LAYER = "forksafe"
+except ImportError:
+    pass
 
 try:
     from refnx.reflect._interactive_modeller import Motofit
