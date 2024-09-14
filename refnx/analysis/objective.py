@@ -495,11 +495,11 @@ class Objective(BaseObjective):
         pars = self.model.parameters
 
         if is_parameter(self.alpha):
-            pars |= self.alpha
+            pars = pars | self.alpha
         if is_parameter(self.lnsigma):
-            pars |= self.lnsigma
+            pars = pars | self.lnsigma
         if len(self.auxiliary_params):
-            pars |= self.auxiliary_params
+            pars = pars | self.auxiliary_params
         return pars
 
     def setp(self, pvals):
@@ -742,7 +742,8 @@ class Objective(BaseObjective):
 
     def covar(self, target="residuals"):
         """
-        Estimates the covariance matrix of the Objective.
+        Estimates the covariance matrix of the Objective by numerical
+        differentiation.
 
         Parameters
         ----------
@@ -756,8 +757,12 @@ class Objective(BaseObjective):
 
         Notes
         -----
-        For most purposes the Jacobian of the `'residuals'` should be used to
-        calculate the covariance matrix, estimated as J.T x J.
+        This method numerically differentiates either the `'residuals'`, the
+        negative log-likelihood, or the negative log-posterior, to estimate
+        the Hessian matrix. The Hessian matrix is then inverted to obtain
+        the covariance matrix.
+        If `'residuals'` is selected, then the Hessian matrix is estimated as
+        as J.T x J.
         If an Objective cannot calculate residuals then the covariance matrix
         can be estimated by inverting a Hessian matrix created from either the
         `'nll'` or `'nlpost'` methods.
@@ -1265,7 +1270,6 @@ class GlobalObjective(Objective):
                     y, y_err, model = objective._data_transform(
                         model=objective.generative()
                     )
-
                     ax.plot(objective.data.x, model, color="k", alpha=0.01)
 
             # put back saved_params
@@ -1554,7 +1558,9 @@ def _to_pymc_distribution(name, par):
         if isinstance(dist_gen, type(stats.uniform)):
             if hasattr(dist.rv, "args"):
                 p = pm.Uniform(
-                    name, dist.rv.args[0], dist.rv.args[1] + dist.rv.args[0]
+                    name,
+                    dist.rv.args[0],
+                    dist.rv.args[1] + dist.rv.args[0],
                 )
             else:
                 p = pm.Uniform(name, 0, 1)
@@ -1563,7 +1569,11 @@ def _to_pymc_distribution(name, par):
         # norm from scipy.stats
         if isinstance(dist_gen, type(stats.norm)):
             if hasattr(dist.rv, "args"):
-                p = pm.Normal(name, mu=dist.rv.args[0], sigma=dist.rv.args[1])
+                p = pm.Normal(
+                    name,
+                    mu=dist.rv.args[0],
+                    sigma=dist.rv.args[1],
+                )
             else:
                 p = pm.Normal(name, mu=0, sigma=1)
             return p

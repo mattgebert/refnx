@@ -558,3 +558,44 @@ in 0.1.13.
 
 0.1.44
 ------
+- build against numpy=2
+- update gh runners
+
+0.1.45
+------
+- Stop repeat append of a Parameter to Objective.model.parameters when the
+  Objective uses lnsigma, alpha, or auxiliary_params
+- reenable pymc tests and update so that it works with pymc5
+- add pymc/emcee/dynesty example to show how to use all three packages to
+  sample a posterior.
+- add jax function for smeared reflectivity.
+- optimisation of ReflectModelTL.
+- add refnx.reflect._cyreflect.abeles_vectorised, a vectorised reflectivity
+  calculator with optional parallelisation
+
+0.1.46
+------
+- Fix bug in ReflectModelTL when numpy2 is installed.
+- Added an example of incoherent summing in the documentation.
+- Added `reflect.FunctionalForm` for Functional profiles. This was previously
+  only present in refnx-models.
+
+0.1.47
+------
+- added vectorised reflectivity calculator,
+  `refnx.reflect._creflect.abeles_vectorised`. This is mainly of use for
+  external programs, it's not used internally yet.
+- Fix Parameter constraints that themselves depended on Parameters constrained
+  with functions.
+
+0.1.48
+------
+- Improve documentation for resolution smearing options in ReflectModel.
+- Added refnx.reflect.create_occupancy, a helper function for creating occupancy
+  (volume fraction) profiles.
+- Added codesigning for macOS thanks to the
+  International Scattering Association (ISA). This means that the refnx app
+  open a lot more easily on macOS, as it's not stopped by Gatekeeper.
+
+0.1.49
+------

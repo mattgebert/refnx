@@ -152,7 +152,7 @@ def get_reflect_backend(backend="c"):
     Parameters
     ----------
     backend: {'python', 'cython', 'c', 'pyopencl', 'py_parratt', 'c_parratt',
-              'numba_parratt'}
+              'numba_parratt', 'abeles_vectorised'}
         The module that calculates the reflectivity. Speed should go in the
         order:
         numba_parratt > c_parratt > c > pyopencl / cython > py_parratt > python.
@@ -173,6 +173,10 @@ def get_reflect_backend(backend="c"):
     be installed. It may not as accurate as the other options. 'pyopencl' is
     only included for completeness. The 'pyopencl' backend is also harder to
     use with multiprocessing-based parallelism.
+    'abeles_vectorised' is vectorised such that many slab sets can be
+    calculated simultaneously. As such, it requires a 3-dimensional array for
+    specification of the slabs. It is not a 1:1 replacement for the other
+    kernels.
     """
     backend = backend.lower()
 
@@ -203,6 +207,15 @@ def get_reflect_backend(backend="c"):
         except ImportError:
             warnings.warn("Can't use the cython abeles backend")
             return get_reflect_backend("c")
+    elif backend == "abeles_vectorised":
+        try:
+            from refnx.reflect._cyreflect import abeles_vectorised
+
+            return abeles_vectorised
+        except ImportError:
+            raise ValueError(
+                "Can't use the abeles_vectorised backend, it's not available"
+            )
     elif backend == "c":
         try:
             from refnx.reflect import _creflect as _c
@@ -273,7 +286,7 @@ def use_reflect_backend(backend="c"):
     Parameters
     ----------
     backend: {'python', 'cython', 'c', 'pyopencl', 'py_parratt', 'c_parratt',
-              'numba_parratt'}, str
+              'numba_parratt', 'abeles_vectorised'}, str
         The function that calculates the reflectivity. Speed should go in the
         order: numba_parratt > c_parratt > c > pyopencl / cython > python. If a
         particular method is not available the function falls back to another
@@ -292,6 +305,10 @@ def use_reflect_backend(backend="c"):
     be installed. It may not as accurate as the other options. 'pyopencl' is
     only included for completeness. The 'pyopencl' backend is also harder to
     use with multiprocessing-based parallelism.
+    'abeles_vectorised' is vectorised such that many slab sets can be
+    calculated simultaneously. As such, it requires a 3-dimensional array for
+    specification of the slabs. It is not a 1:1 replacement for the other
+    kernels.
     """
     global kernel
     f = kernel
@@ -335,6 +352,11 @@ class ReflectModel:
 
         This value is turned into a Parameter during the construction of this
         object.
+        Constant dq/q resolution smearing is deactivated if
+        `dq_type` is set to `'pointwise'` AND point-by-point resolution
+        information is supplied to either the
+        :meth:`refnx.reflect.ReflectModel.__call__` or
+        :meth:`refnx.reflect.ReflectModel.model` methods.
     threads: int, optional
         Specifies the number of threads for parallel calculation. This
         option is only applicable if you are using the ``_creflect``
@@ -342,19 +364,20 @@ class ReflectModel:
         ``_reflect``. If `threads == -1` then all available processors are
         used.
     quad_order: int, optional
-        the order of the Gaussian quadrature polynomial for doing the
+        the order of the Gaussian quadrature polynomial for doing pointwise
         resolution smearing. default = 17. Don't choose less than 13. If
         quad_order == 'ultimate' then adaptive quadrature is used. Adaptive
         quadrature will always work, but takes a _long_ time (2 or 3 orders
         of magnitude longer). Fixed quadrature will always take a lot less
-        time. BUT it won't necessarily work across all samples. For
+        time, BUT it won't necessarily work across all samples. For
         example, 13 points may be fine for a thin layer, but will be
         atrocious at describing a multilayer with bragg peaks.
+        If `dq_type='constant'` then this value is ignored.
     dq_type: {'pointwise', 'constant'}, optional
         Chooses whether pointwise or constant dQ/Q resolution smearing (see
         `dq` keyword) is used. To use pointwise smearing the `x_err` keyword
-        provided to `Objective.model` method must be an array, otherwise the
-        smearing falls back to 'constant'.
+        provided to :meth:`refnx.reflect.ReflectModel.model` must be an array,
+        otherwise the smearing falls back to 'constant'.
     q_offset: float or refnx.analysis.Parameter, optional
         Compensates for uncertainties in the angle at which the measurement is
         performed. A positive/negative `q_offset` corresponds to a situation
@@ -410,13 +433,21 @@ class ReflectModel:
             Units = Angstrom**-1
         p : refnx.analysis.Parameters, optional
             parameters required to calculate the model
-        x_err : np.ndarray
-            dq resolution smearing values for the dataset being considered.
+        x_err : {np.ndarray, float} optional
+            Specifies how the instrumental resolution smearing is carried out
+            for each of the points in `x`.
+            See :func:`refnx.reflect.reflectivity` for further details.
 
         Returns
         -------
         reflectivity : np.ndarray
             Calculated reflectivity
+
+        Notes
+        -----
+        If `x_err` is not provided then the calculation will fall back to
+        the constant dq/q smearing specified by the `dq` attribute of this
+        object.
         """
         return self.model(x, p=p, x_err=x_err)
 
@@ -499,14 +530,21 @@ class ReflectModel:
             Units = Angstrom**-1
         p : refnx.analysis.Parameters, optional
             parameters required to calculate the model
-        x_err : np.ndarray
-            dq resolution smearing values for the dataset being considered.
+        x_err : {np.ndarray, float} optional
+            Specifies how the instrumental resolution smearing is carried out
+            for each of the points in `x`.
+            See :func:`refnx.reflect.reflectivity` for further details.
 
         Returns
         -------
         reflectivity : np.ndarray
             Calculated reflectivity
 
+        Notes
+        -----
+        If `x_err` is not provided then the calculation will fall back to
+        the constant dq/q smearing specified by the `dq` attribute of this
+        object.
         """
         if p is not None:
             self.parameters.pvals = np.array(p)
@@ -715,14 +753,26 @@ class ReflectModelTL(ReflectModel):
             x_err = q * float(self.dq) / 100.0
 
         qo = self.quad_order
-        R = np.array(
-            [
-                reflectivity(
-                    np.array([a_q]), a_slabs, dq=a_dq, quad_order=qo, threads=1
-                )
-                for a_q, a_slabs, a_dq in zip(q, slabs, x_err)
-            ]
+
+        unique_slabs, idxs, inverse_idxs = np.unique(
+            slabs, axis=0, return_index=True, return_inverse=True
         )
+        msks = [np.squeeze(inverse_idxs) == idx for idx in idxs]
+        R = np.empty_like(q)
+        for msk, a_unique_slabs in zip(msks, unique_slabs):
+            if np.count_nonzero(x_err[msk]):
+                # point-wise resolution smearing
+                R[msk] = _smeared_kernel_pointwise(
+                    q[msk],
+                    a_unique_slabs,
+                    x_err[msk],
+                    quad_order=qo,
+                    threads=1,
+                )
+            else:
+                # no resolution smearing
+                R[msk] = abeles(q[msk], a_unique_slabs, threads=1)
+
         R *= self.scale.value
         R += self.bkg.value
         return np.squeeze(R)
@@ -1077,16 +1127,16 @@ def _smeared_kernel_pointwise(qvals, w, dqvals, quad_order=17, threads=-1):
     va = qvals - _INTLIMIT * dqvals / _FWHM
     vb = qvals + _INTLIMIT * dqvals / _FWHM
 
-    va = va[:, np.newaxis]
-    vb = vb[:, np.newaxis]
+    va = va[..., np.newaxis]
+    vb = vb[..., np.newaxis]
 
-    qvals_for_res = (np.atleast_2d(abscissa) * (vb - va) + vb + va) / 2.0
+    qvals_for_res = (abscissa[np.newaxis, :] * (vb - va) + vb + va) / 2.0
     smeared_rvals = kernel(qvals_for_res, w, threads=threads)
 
-    smeared_rvals = np.reshape(smeared_rvals, (qvals.size, abscissa.size))
+    # smeared_rvals = np.reshape(smeared_rvals, (qvals.size, abscissa.size))
 
     smeared_rvals *= np.atleast_2d(gaussvals * weights)
-    return np.sum(smeared_rvals, 1) * _INTLIMIT
+    return np.sum(smeared_rvals, -1) * _INTLIMIT
 
 
 def _smeared_kernel_constant(q, w, resolution, threads=-1):

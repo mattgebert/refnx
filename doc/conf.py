@@ -38,12 +38,13 @@ extensions = [
     'sphinx.ext.viewcode',
     'sphinx.ext.autosummary',
     'sphinx.ext.napoleon',
-    'nbsphinx',
+    'myst_nb',
     'jupyter_sphinx',
     'sphinxcontrib.bibtex',
     'sphinxcontrib.jquery',
     'sphinx_rtd_theme',
 ]
+jupyter_execute_notebooks = "off"
 
 bibtex_bibfiles = ["../testimonials.bib"]
 
@@ -63,7 +64,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'refnx'
-copyright = '2015-2022, Andrew Nelson'
+copyright = '2015-2024, Andrew Nelson'
 author = 'Andrew Nelson'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -77,9 +78,9 @@ version = re.sub(r'\.dev-.*$', r'.dev', refnx.__version__)
 release = refnx.__version__
 
 intersphinx_mapping = {'py': ('https://docs.python.org/3', None),
-                       'numpy': ('https://docs.scipy.org/doc/numpy/', None),
-                       'scipy': ('https://docs.scipy.org/doc/scipy/reference/', None),
-                       'matplotlib': ('https://matplotlib.org/', None),
+                       'numpy': ('https://numpy.org/doc/stable/', None),
+                       'scipy': ('https://docs.scipy.org/doc/scipy/', None),
+                       'matplotlib': ('https://matplotlib.org/stable/', None),
                        }
 extlinks = {
     'scipydoc' : ('https://docs.scipy.org/doc/scipy/reference/generated/%s.html', ''),

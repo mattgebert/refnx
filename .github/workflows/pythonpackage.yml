@@ -2,9 +2,13 @@ name: Test
 
 on:
   - pull_request
+  - workflow_dispatch
+
+permissions:
+  contents: read
 
 jobs:
-
+###############################################################################
   test_linux:
 
     runs-on: ubuntu-22.04
@@ -24,8 +28,6 @@ jobs:
         cache: 'pip' # caching pip dependencies
         allow-prereleases: true
 
-    - run: pip install -r .requirements.txt
-
     - name: setup apt dependencies
       run: |
         sudo apt-get update
@@ -39,10 +41,15 @@ jobs:
         MPLBACKEND: agg
       run: |
         python -m pip install --upgrade pip
-        python -m pip install wheel
-        python -m pip install -e .[all]
+        python -m pip install wheel build
+        python -m build
+        python -m pip install dist/*.whl
+        pip install -r .requirements.txt
+
         # uses xvfb for GUI part of the test
-        xvfb-run pytest
+        pushd tools
+        xvfb-run pytest --pyargs refnx
+        popd
 
         # check that refnx gui starts
         # python tools/app/check_app_starts.py refnx
@@ -80,9 +87,55 @@ jobs:
 #        path: dist/
 
 
+###############################################################################
+  test_macos_intel:
+
+    runs-on: macos-12
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        python-version: [ '3.12' ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: mkdir -p dist
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip' # caching pip dependencies
+          allow-prereleases: true
+
+      - name: Make wheel
+        shell: bash -el {0}
+        run: |
+          
+          python -m pip install --upgrade pip
+          python -m pip install wheel delocate build
+          python -m build . -v
+
+      - name: Install package and test with pytest
+        shell: bash -el {0}
+        env:
+          MPLBACKEND: agg
+        run: |
+          pip install -r .requirements.txt
+          pushd dist
+          python -m pip install --only-binary=refnx --no-index --find-links=. refnx
+          pytest --pyargs refnx
+          popd
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: refnx-wheel-macos-${{ matrix.python-version }}-intel
+          path: dist/
+
+
   test_macos:
 
-    runs-on: macos-latest
+    runs-on: macos-14
     strategy:
       fail-fast: true
       max-parallel: 3
@@ -92,57 +145,85 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - run: mkdir -p dist
+
     - uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip' # caching pip dependencies
         allow-prereleases: true
 
-    - run: pip install -r .requirements.txt
-
-    - run: mkdir -p dist
-
-    - name: Install openmp
+    - name: install compilers
+      shell: bash -el {0}
       run: |
-        brew install libomp
+        brew install llvm
 
     - name: Make wheel
+      shell: bash -el {0}
       env:
-        CC: /usr/bin/clang
-        CXX: /usr/bin/clang++
-        CXXFLAGS: "-Xpreprocessor -fopenmp -I/usr/local/opt/libomp/include"
-        CFLAGS: "-Xpreprocessor -fopenmp -I/usr/local/opt/libomp/include"
-        LDFLAGS: "-L/usr/local/opt/libomp/lib -lomp"
-        DYLD_LIBRARY_PATH: /usr/local/opt/libomp/lib
+        ARCHFLAGS: "-arch arm64"
+        _PYTHON_HOST_PLATFORM: macosx-11.0-arm64
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install wheel delocate
+        sudo xcode-select -s /Applications/Xcode_15.3.app
+        export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+        export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
+        export LDFLAGS="-L/opt/homebrew/opt/llvm/lib/c++ -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++ -L/opt/homebrew/opt/llvm/lib"
 
-        python -m pip wheel . --no-deps -w dist
+        python -m pip install --upgrade pip
+        python -m pip install wheel delocate build
+        python -m build . -v
         # so that libomp is distributed with wheel
         delocate-wheel -v dist/refnx*.whl
 
     - name: Install package and test with pytest
+      shell: bash -el {0}
       env:
         MPLBACKEND: agg
       run: |
+        pip install -r .requirements.txt
         pushd dist
         python -m pip install --only-binary=refnx --no-index --find-links=. refnx
-
         pytest --pyargs refnx
-
         popd
 
+    - uses: actions/upload-artifact@v4
+      with:
+        name: refnx-wheel-macos-${{ matrix.python-version }}
+        path: dist/
+
+
+  test_macos_app:
+    needs: test_macos
+    runs-on: macos-14
+    strategy:
+      fail-fast: true
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        allow-prereleases: true
+
+    - run: mkdir -p dist
+
+    - name: Download wheel
+      uses: actions/download-artifact@v4
+      with:
+        pattern: refnx-wheel-macos-3.12
+        merge-multiple: true
+        path: dist
+
     - name: Make frozen GUI executable
-      if: ${{ matrix.python-version == '3.10' }}
       run: |
         # make app in virtualenv
         python -m venv app
         source app/bin/activate
         python -m pip install --upgrade --upgrade-strategy eager -r tools/app/requirements.txt
-        # pin scipy 1.7.3 because of pyinstaller doesn't like arm64 bing in libgfortran.dylib
         python -m pip install scipy
         pushd dist
+        ls
         python -m pip install --only-binary=refnx --no-index --find-links=. refnx
         popd
         python -m pip install pyinstaller psutil
@@ -153,18 +234,62 @@ jobs:
         pyinstaller motofit.spec
 
         # check to see that the app starts
-        python check_app_starts.py dist/motofit.app/Contents/MacOS/motofit
-
-        zip -r -X dist/motofit.app.zip dist/motofit.app/
-        mv dist/motofit.app.zip ../../dist/
+        python check_app_starts.py dist/refnx.app/Contents/MacOS/refnx
         popd
+
+    - name: Sign app and create dmg
+      if: ${{ github.event.pull_request.head.repo.full_name == 'refnx/refnx' }}
+      env:
+        MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_ISA }}
+        MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_ISA_PWD }}
+      run: |
+        pushd tools/app
+        echo $MACOS_CERTIFICATE | base64 --decode > certificate.p12
+        ls -al certificate.p12
+        security create-keychain -p DloaAcYP build.keychain
+        security default-keychain -s build.keychain
+        security unlock-keychain -p DloaAcYP build.keychain
+        security import certificate.p12 -k build.keychain -P $MACOS_CERTIFICATE_PWD -T /usr/bin/codesign
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k DloaAcYP build.keychain >/dev/null
+        security find-identity -p codesigning
+      
+        codesign --verify --options=runtime --entitlements entitlements.plist --timestamp --deep --verbose=4 --force --sign "Developer ID Application: The International Scattering Alliance (8CX8K63BQM)" dist/refnx.app
+          
+        cp ../../refnx/reflect/_app/icons/Motofit.icns .
+        sips -i Motofit.icns
+        DeRez -only icns Motofit.icns > icns.rsrc
+        hdiutil create dist/refnx.dmg -srcfolder dist/refnx.app -ov -format UDZO
+        Rez -append icns.rsrc -o dist/refnx.dmg
+        SetFile -a C dist/refnx.dmg
+        codesign -s "Developer ID Application: The International Scattering Alliance (8CX8K63BQM)" dist/refnx.dmg
+        mv dist/refnx.dmg ../../dist/
+        popd
+
+# xcrun notarytool submit --apple-id "$APPLEID" --password "$APP_PASSWORD" --team-id 8CX8K63BQM --wait refnx.dmg
+    - name: Notarize DMG
+      if: github.event.pull_request.head.repo.full_name == github.repository && github.repository == 'refnx/refnx'
+      uses: lando/notarize-action@v2
+      with:
+        product-path: "dist/refnx.dmg"
+        primary-bundle-id: "com.refnx.refnx"
+        appstore-connect-username: ${{ secrets.NOTARIZATION_USERNAME }}
+        appstore-connect-password: ${{ secrets.NOTARIZATION_PASSWORD }}
+        appstore-connect-team-id: 8CX8K63BQM
+        verbose: True
+
+    - name: Staple Release Build
+      if: ${{ github.event.pull_request.head.repo.full_name == 'refnx/refnx' }}
+      uses: BoundfoxStudios/action-xcode-staple@v1
+      with:
+        product-path: "dist/refnx.dmg"
 
     - uses: actions/upload-artifact@v4
       with:
-        name: refnx-wheel-macos-${{ matrix.python-version }}
-        path: dist/
+        name: refnx-app-macos-${{ matrix.python-version }}
+        path: dist/*.dmg
 
 
+###############################################################################
   test_win:
 
     runs-on: windows-latest
@@ -238,10 +363,11 @@ jobs:
 
     - uses: actions/upload-artifact@v4
       with:
-        name: refnx-wheel-win-${{ matrix.python-version }}
+        name: refnx-exe-win-${{ matrix.python-version }}
         path: dist/
 
 
+###############################################################################
   build_doc:
 
     runs-on: ubuntu-latest
@@ -272,8 +398,9 @@ jobs:
         python -m pip install -r requirements.txt
         make html
 
-  lint:
 
+###############################################################################
+  lint:
     runs-on: ubuntu-latest
     strategy:
       max-parallel: 1

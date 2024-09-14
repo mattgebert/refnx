@@ -21,6 +21,7 @@ from refnx.reflect.structure import (
     Stack,
     MaterialSLD,
     MixedSlab,
+    create_occupancy,
 )
 from refnx.reflect.interface import (
     Erf,
@@ -33,6 +34,7 @@ from refnx.reflect.interface import (
 )
 from refnx.reflect.spline import Spline
 from refnx.reflect._lipid import LipidLeaflet
+from refnx.reflect._functional_form import FunctionalForm
 from refnx._lib._testutils import PytestTester
 from refnx.reflect._app import gui, main
 

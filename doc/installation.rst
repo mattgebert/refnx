@@ -5,15 +5,15 @@ Installation
 ====================================
 
 .. _Visual Studio compiler: https://wiki.python.org/moin/WindowsCompilers
-.. _miniconda: https://conda.io/miniconda.html
+.. _miniforge: https://github.com/conda-forge/miniforge
 .. _github: https://github.com/refnx/refnx
 .. _homebrew: https://brew.sh/
 
-*refnx* has been tested on Python 3.8, 3.9, 3.10, and 3.11. It requires the
+*refnx* has been tested on Python 3.9, 3.10, 3.11, 3.12. It requires the
 *numpy, scipy, cython* packages to work. Additional features
 require the *pytest, h5py, xlrd, uncertainties, attrs, matplotlib, Jupyter,*
 *ipywidgets, traitlets, tqdm, pandas, qtpy, pyqt6, periodictable, pymc,
-pytensor*. To build the bleeding edge code you will need to have access to a
+pytensor* packages. To build the bleeding edge code you will need to have access to a
 C-compiler to build a couple of Python extensions. C-compilers should be
 installed on Linux. On OSX you will need to install Xcode and the command line
 tools. On Windows you will need to install the correct
@@ -24,7 +24,7 @@ Installation into a *conda* environment
 =======================================
 
 Perhaps the easiest way to create a scientific computing environment is to use
-the `miniconda`_ package manager. Once *conda* has been installed the first
+the `miniforge`_ package manager. Once *conda* has been installed the first
 step is to create a *conda* environment.
 
 Creating a conda environment
@@ -37,7 +37,7 @@ Creating a conda environment
 
     ::
 
-     conda create -n refnx python=3.9
+     conda create -n refnx python=3.12
 
 2. Activate the environment that we're going to be working in:
 

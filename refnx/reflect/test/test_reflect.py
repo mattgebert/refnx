@@ -9,6 +9,7 @@ import pytest
 
 # Before removing what appear to be unused imports think twice.
 # Some of the tests use eval, which requires the imports.
+import refnx
 import refnx.reflect._reflect as _reflect
 from refnx.analysis import (
     Transform,
@@ -315,6 +316,36 @@ class TestReflect:
             calc = kernel(q, slabs)
         assert_almost_equal(calc, refl1d[1])
 
+    def test_abeles_vectorised(self):
+        w = np.array(
+            [
+                [0, 2.07, 0, 0],
+                [100, 3.45, 0.1, 3],
+                [200, 5.0, 0.01, 1],
+                [0, 6.0, 0, 5],
+            ]
+        )
+        N = 1024
+        var = w.flatten() * 0.05
+        var = var * var
+        rng = np.random.default_rng()
+        w_noise = rng.multivariate_normal(w.flatten(), np.diag(var), size=(N,))
+        w_noise = np.reshape(w_noise, (N,) + w.shape)
+        x = np.geomspace(0.005, 0.5, 1001)
+        scale = rng.normal(loc=1, scale=0.02, size=N)
+        bkg = rng.normal(loc=1e-6, scale=1e-7, size=N)
+
+        y = refnx.reflect._creflect.abeles_vectorised(
+            x, w_noise, bkg=bkg, scale=scale
+        )
+        y_test = np.array(
+            [
+                refnx.reflect.abeles(x, w_noise[i], scale=scale[i], bkg=bkg[i])
+                for i in range(N)
+            ]
+        )
+        assert_allclose(y, y_test)
+
     @pytest.mark.parametrize("backend", BACKENDS)
     @pytest.mark.filterwarnings("ignore:Using the SLOW")
     def test_compare_refl1d(self, backend):
@@ -431,9 +462,19 @@ class TestReflect:
         t = np.array([1.0] * len(self.qvals))
         lam = general.wavelength(self.qvals, t)
 
-        rff = ReflectModelTL(self.structure, dq=0.0)
-        model = rff.model(np.c_[t, lam])
+        rff2 = ReflectModelTL(self.structure, dq=0.0)
+        model = rff2.model(np.c_[t, lam])
         assert_allclose(model, self.rvals, atol=2e-7)
+
+        # check resolution smearing of ReflectModelTL
+        dq = 0.05 * self.qvals
+        rff.dq.value = 5.0
+        rff2.dq.value = 5.0
+        assert_allclose(
+            rff2.model(np.c_[t, lam]),
+            rff.model(self.qvals, x_err=dq),
+            atol=2e-7,
+        )
 
     def test_mixed_reflectivity_model(self):
         # test that mixed area model works ok.
@@ -717,7 +758,7 @@ class TestReflect:
         assert_equal(slabs[1, 3], sio2_l.rough.value)
 
         f = CurveFitter(objective)
-        f.fit(method="differential_evolution", seed=1, maxiter=3)
+        f.fit(method="differential_evolution", seed=1, maxiter=3, polish=False)
 
         slabs = structure.slabs()
         assert_equal(slabs[2, 0:2], slabs[3, 0:2])
