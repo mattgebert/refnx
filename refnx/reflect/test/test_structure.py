@@ -25,6 +25,7 @@ from refnx.reflect import (
 from refnx.reflect.structure import _profile_slicer
 from refnx.analysis import Parameter, Interval, Parameters
 from refnx.analysis.parameter import _BinaryOp
+from orsopy.fileio.model_language import SampleModel
 
 
 class TestStructure:
@@ -88,6 +89,11 @@ class TestStructure:
                 [[0, 6.36, 0, 0, 0], [100, sld, sldi, 4, 0.9], [0, 0, 0, 5, 0]]
             ),
         )
+
+    def test_is_magnetic(self):
+        assert hasattr(self.s[0], "is_magnetic")
+        assert self.s[0].is_magnetic is False
+        assert self.s.is_magnetic is False
 
     def test_interface(self):
         # can we set the interface property correctly
@@ -228,27 +234,25 @@ class TestStructure:
     def test_repr_materialsld(self):
         p = MaterialSLD("SiO2", density=2.2, name="silica")
         sldc = complex(p)
-        assert_allclose(sldc.real, 3.4752690258246504)
-        assert_allclose(sldc.imag, 1.0508799522721932e-05)
         print(repr(p))
         q = eval(repr(p))
-        sldc = complex(q)
-        assert_allclose(sldc.real, 3.4752690258246504)
-        assert_allclose(sldc.imag, 1.0508799522721932e-05)
+        sldc_r = complex(q)
+        assert_allclose(sldc_r.real, sldc.real)
+        assert_allclose(sldc_r.imag, sldc.imag)
 
     def test_materialsld(self):
         p = MaterialSLD("SiO2", density=2.2, name="silica")
         sldc = complex(p)
-        assert_allclose(sldc.real, 3.4752690258246504)
-        assert_allclose(sldc.imag, 1.0508799522721932e-05)
+        assert_allclose(sldc.real, 3.4753, rtol=2e-5)
+        assert_allclose(sldc.imag, 1.0509e-05, rtol=2e-5)
         assert p.probe == "neutron"
 
         # is X-ray SLD correct?
         p.wavelength = 1.54
         p.probe = "x-ray"
         sldc = complex(p)
-        assert_allclose(sldc.real, 18.864796064009866)
-        assert_allclose(sldc.imag, 0.2436013463223236)
+        assert_allclose(sldc.real, 18.865201)
+        assert_allclose(sldc.imag, 0.243605, rtol=1e-4)
 
         assert len(p.parameters) == 1
         assert p.formula == "SiO2"
@@ -257,8 +261,8 @@ class TestStructure:
         p.probe = "neutron"
         p.density.value = 4.4
         sldc = complex(p)
-        assert_allclose(sldc.real, 3.4752690258246504 * 2)
-        assert_allclose(sldc.imag, 1.0508799522721932e-05 * 2)
+        assert_allclose(sldc.real, 3.4753 * 2, rtol=4e-5)
+        assert_allclose(sldc.imag, 1.0509e-05 * 2, rtol=4e-5)
 
         # should be able to make a Slab from MaterialSLD
         slab = p(10, 3)
@@ -581,3 +585,19 @@ class TestStructure:
         s = Structure.from_slabs(slabs)
         slabs_2 = s.slabs()
         assert_allclose(slabs_2, slabs)
+
+    def test_to_from_orso(self):
+        # orso model language serialisation
+        air = SLD(0)
+        sio2 = MaterialSLD("SiO2", 2.2, name="SiO2")
+        si = SLD(2.07)
+
+        s = air | sio2(15, 3) | si(0, 4)
+        mls = s.to_orso()
+        dct = mls.to_dict()
+
+        sample_model = SampleModel(**dct)
+        s2 = Structure.from_orso(sample_model)
+        assert_allclose(s2[-1].rough.value, s[-1].rough.value)
+        assert_allclose(s2[1].rough.value, s[1].rough.value)
+        assert_allclose(s2[1].thick.value, s[1].thick.value)

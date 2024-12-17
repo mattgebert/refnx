@@ -38,7 +38,6 @@ from refnx.reflect import SpinChannel
 
 
 class TestSpinSet(object):
-    @pytest.mark.usefixtures("no_data_directory")
     @pytest.fixture(autouse=True)
     def setup_method(self, tmp_path, data_directory):
         self.pth = data_directory / "reduce" / "PNR_files"
@@ -124,7 +123,6 @@ class TestSpinSet(object):
 
 
 class TestPlatypusNexus(object):
-    @pytest.mark.usefixtures("no_data_directory")
     @pytest.fixture(autouse=True)
     def setup_method(self, tmp_path, data_directory):
         self.pth = data_directory / "reduce"
@@ -511,7 +509,6 @@ class TestPlatypusNexus(object):
 
 
 class TestSpatzNexus:
-    @pytest.mark.usefixtures("no_data_directory")
     @pytest.fixture(autouse=True)
     def setup_method(self, tmp_path, data_directory):
         self.pth = data_directory / "reduce"
@@ -531,7 +528,10 @@ class TestSpatzNexus:
 
     def test_chod(self):
         flight_length = self.f342.chod()
-        assert_almost_equal(flight_length[0], 8062.0232)
+        flight_length = self.f342.chod()
+        cat = self.f342.cat
+        assert_almost_equal(cat.sample_distance, 6237.0)
+        assert_almost_equal(flight_length[0], 8062.0232, decimal=4)
         assert_almost_equal(flight_length[1], 479.9536, decimal=4)
 
     def test_phase_angle(self):
@@ -569,7 +569,6 @@ class TestSpatzNexus:
         assert_allclose(dy, 864.0137)
 
 
-@pytest.mark.usefixtures("no_data_directory")
 def test_catalogue(data_directory):
     pth = Path(data_directory) / "reduce"
     catalogue(0, 10000000, data_folder=pth, prefix="PLP")
@@ -584,7 +583,6 @@ def test_catalogue(data_directory):
     assert df.columns[0] == "omega"
 
 
-@pytest.mark.usefixtures("no_data_directory")
 def test_Catalogue_pickle(data_directory):
     pth = Path(data_directory) / "reduce"
     f113 = pth / "PLP0011613.nx.hdf"
@@ -597,7 +595,6 @@ def test_Catalogue_pickle(data_directory):
     pickle.loads(pkl)
 
 
-@pytest.mark.usefixtures("no_data_directory")
 def test_create_nexus(data_directory):
     pth = Path(data_directory) / "reduce"
     f113 = pth / "PLP0011613.nx.hdf"

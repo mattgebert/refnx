@@ -1,7 +1,6 @@
 #! /usr/bin/env python
 # System imports
 from setuptools import setup, Extension
-from setuptools.command.test import test as TestCommand
 import os
 import subprocess
 import platform
@@ -24,7 +23,7 @@ else:
 # versioning
 MAJOR = 0
 MINOR = 1
-MICRO = 49
+MICRO = 51
 ISRELEASED = False
 VERSION = f"{MAJOR}.{MINOR}.{MICRO}"
 
@@ -251,27 +250,8 @@ HAS_OPENMP = check_openmp_support()
 ###############################################################################
 
 
-class PyTest(TestCommand):
-    user_options = [("pytest-args=", "a", "Arguments to pass to pytest")]
-
-    def initialize_options(self):
-        TestCommand.initialize_options(self)
-        self.pytest_args = "refnx"
-
-    def run_tests(self):
-        import shlex
-        import pytest
-
-        print("Running tests with pytest")
-        errno = pytest.main(shlex.split(self.pytest_args))
-        sys.exit(errno)
-
-
 # refnx setup
-info = {
-    "include_package_data": True,
-    "cmdclass": {"test": PyTest},
-}
+info = {"include_package_data": True,}
 
 ####################################################################
 # this is where setup starts
@@ -361,7 +341,9 @@ def setup_package():
 
             _creflect = Extension(
                 name="refnx.reflect._creflect",
-                sources=["src/_creflect.pyx", "src/refcaller.cpp"],
+                sources=["src/_creflect.pyx",
+                         "src/refcaller.cpp",
+                         "src/pnr/magnetic.cc",],
                 include_dirs=[numpy_include],
                 language="c++",
                 extra_compile_args=["-std=c++11"],
@@ -386,7 +368,11 @@ def setup_package():
                 # cyreflect extension module
                 _cyreflect = Extension(
                     name="refnx.reflect._cyreflect",
-                    sources=["src/_cyreflect.pyx", "src/refcaller.cpp"],
+                    sources=[
+                        "src/_cyreflect.pyx",
+                        "src/refcaller.cpp",
+                        "src/pnr/magnetic.cc"
+                    ],
                     include_dirs=[numpy_include],
                     language="c++",
                     extra_compile_args=[],

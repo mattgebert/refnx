@@ -452,6 +452,13 @@ class Structure(UserList):
         """
         return [c.interfaces for c in self.components]
 
+    @property
+    def is_magnetic(self):
+        """
+        Are any of the Components in the Structure magnetic?
+        """
+        return any([c.is_magnetic for c in self.components])
+
     def overall_sld(self, slabs, solvent):
         """
         Performs a volume fraction weighted average of the material SLD in a
@@ -489,6 +496,11 @@ class Structure(UserList):
             module. The option is ignored if using the pure python calculator,
             ``_reflect``. If `threads == 0` then all available processors are
             used.
+
+        Returns
+        -------
+        reflectivity : np.ndarray
+            Reflectivity corresponding to each of the Q-points.
 
         Notes
         -----
@@ -711,13 +723,13 @@ class Structure(UserList):
         ----------
         pvals : np.ndarray, optional
             Numeric values for the Parameter's that are varying
-        samples: number
+        samples : number
             If this structures constituent parameters have been sampled, how
             many samples you wish to plot on the graph.
-        fig: Figure instance, optional
+        fig : Figure instance, optional
             If `fig` is not supplied then a new figure is created. Otherwise
             the graph is created on the current axes on the supplied figure.
-        align: int, optional
+        align : int, optional
             Aligns the plotted structures around a specified interface in the
             slab representation of a Structure. This interface will appear at
             z = 0 in the sld plot. Note that Components can consist of more
@@ -757,6 +769,97 @@ class Structure(UserList):
         ax.set_xlabel("z / $\\AA$")
 
         return fig, ax
+
+    def to_orso(self):
+        """
+        Creates an ORSO model language description of a Structure. Only works with Structures solely consisting of Slabs at the moment
+
+        Returns
+        -------
+        model : :class:`orso.fileio.model_language.SampleModel`
+        """
+        from orsopy.fileio import model_language as ml
+
+        defaults = ml.ModelParameters(
+            length_unit="angstrom", sld_unit="1/angstrom^2"
+        )
+        layers = {}
+
+        for i, comp in enumerate(self.components):
+            if not isinstance(comp, Slab):
+                raise RuntimeError(
+                    "Can only export Structure solely consisting of Slabs at the moment"
+                )
+
+            if isinstance(comp.sld, MaterialSLD):
+                mat = ml.Material(
+                    comp.sld.formula, mass_density=comp.sld.density
+                )
+            else:
+                _csld = complex(comp.sld) * 1e-6
+                _csld = ml.ComplexValue(_csld.real, _csld.imag)
+                mat = ml.Material(sld=_csld)
+
+            if comp.name:
+                ni = comp.name
+            else:
+                ni = f"m{i}"
+
+            layers[ni] = ml.Layer(
+                thickness=comp.thick, roughness=comp.rough, material=mat
+            )
+
+        stack = " | ".join(list(layers.keys()))
+        model = ml.SampleModel(
+            stack=stack,
+            layers=layers,
+            globals=defaults,
+            reference="ORSO model language | 1.0",
+        )
+        return model
+
+    @classmethod
+    def from_orso(cls, sample_model):
+        """
+        Creates a Structure from an :class:`orso.fileio.model_language.SampleModel`
+
+        Parameters
+        ----------
+        sample_model : :class:`orso.fileio.model_language.SampleModel`
+
+        Returns
+        -------
+        structure : Structure
+
+        Example
+        -------
+
+        >>> with open('oml.yml') as f:
+        ...     dct = yaml.safe_load(f)
+        >>> model = SampleModel(**dct)
+
+        """
+        layers = sample_model.resolve_to_layers()
+        s = Structure()
+
+        for layer in layers:
+            mat = layer.material
+            if mat.formula is not None:
+                sld = MaterialSLD(
+                    mat.formula, density=mat.mass_density.magnitude
+                )
+            else:
+                sld = SLD(mat.get_sld() * 1e6)
+                print(sld)
+
+            slab = Slab(
+                layer.thickness.magnitude,
+                sld,
+                layer.roughness.magnitude,
+                name=layer.original_name,
+            )
+            s |= slab
+        return s
 
 
 def overall_sld(slabs, solvent):
@@ -1041,13 +1144,28 @@ class MaterialSLD(Scatterer):
         return self._parameters
 
 
+def possibly_create_scatterer(obj):
+    """
+    Possibly create an SLD object from float, complex, SLD
+
+    Parameters
+    ----------
+    obj: float, complex, Parameter, Parameters, Scatterer
+        object to coerce into a Scatterer
+    """
+    if isinstance(obj, Scatterer):
+        return obj
+    else:
+        return SLD(obj)
+
+
 class Component:
     """
     A base class for describing the structure of a subset of an interface.
 
     Parameters
     ----------
-    name : str, optional
+    name: str, optional
         The name associated with the Component
 
     Notes
@@ -1060,6 +1178,10 @@ class Component:
     def __init__(self, name=""):
         self.name = name
         self._interfaces = None
+
+    @property
+    def is_magnetic(self):
+        return False
 
     def __or__(self, other):
         """
@@ -1239,10 +1361,7 @@ class Slab(Component):
         self.thick = possibly_create_parameter(
             thick, name=f"{name} - thick", units="Å"
         )
-        if isinstance(sld, Scatterer):
-            self.sld = sld
-        else:
-            self.sld = SLD(sld)
+        self.sld = possibly_create_scatterer(sld)
         self.rough = possibly_create_parameter(
             rough, name=f"{name} - rough", units="Å"
         )
@@ -1622,6 +1741,10 @@ class Stack(Component, UserList):
         else:
             raise ValueError()
         return self
+
+    @property
+    def is_magnetic(self):
+        return any([c.is_magnetic for c in self])
 
 
 class _PolarisedSlab(Component):

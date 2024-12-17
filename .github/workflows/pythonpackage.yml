@@ -1,8 +1,16 @@
 name: Test
 
 on:
-  - pull_request
-  - workflow_dispatch
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
 
 permissions:
   contents: read
@@ -20,9 +28,9 @@ jobs:
 
     steps:
 
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip' # caching pip dependencies
@@ -53,6 +61,9 @@ jobs:
 
         # check that refnx gui starts
         # python tools/app/check_app_starts.py refnx
+        
+        # run vendored ptemcee tests
+        pytest --pyargs refnx._lib.ptemcee.tests
 
     - name: Make sdist
       if: ${{ matrix.python-version == '3.9' }}
@@ -60,7 +71,7 @@ jobs:
         git clean -xdf
         python setup.py sdist
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
       if: ${{ matrix.python-version == '3.9' }}
       with:
         name: refnx-wheel-linux-${{ matrix.python-version }}
@@ -76,12 +87,12 @@ jobs:
 #        PLAT: ["manylinux2014_x86_64"]
 #
 #    steps:
-#    - uses: actions/checkout@v4
+#    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 #    - name: Make Linux Wheel
 #      run: |
 #        docker run --rm -e="PLAT=${{ matrix.PLAT }}" -v $(pwd):/io quay.io/pypa/${{ matrix.PLAT }} /bin/bash /io/tools/build_manylinux_wheels.sh
 #
-#    - uses: actions/upload-artifact@v3
+#    - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
 #      with:
 #        name: refnx-wheel
 #        path: dist/
@@ -90,7 +101,7 @@ jobs:
 ###############################################################################
   test_macos_intel:
 
-    runs-on: macos-12
+    runs-on: macos-13
     strategy:
       fail-fast: true
       max-parallel: 1
@@ -98,18 +109,18 @@ jobs:
         python-version: [ '3.12' ]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - run: mkdir -p dist
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: ${{ matrix.python-version }}
           cache: 'pip' # caching pip dependencies
           allow-prereleases: true
 
       - name: Make wheel
-        shell: bash -el {0}
+        shell: bash
         run: |
           
           python -m pip install --upgrade pip
@@ -117,7 +128,7 @@ jobs:
           python -m build . -v
 
       - name: Install package and test with pytest
-        shell: bash -el {0}
+        shell: bash
         env:
           MPLBACKEND: agg
         run: |
@@ -127,7 +138,7 @@ jobs:
           pytest --pyargs refnx
           popd
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: refnx-wheel-macos-${{ matrix.python-version }}-intel
           path: dist/
@@ -143,29 +154,29 @@ jobs:
         python-version: ['3.10', '3.11', '3.12']
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
     - run: mkdir -p dist
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip' # caching pip dependencies
         allow-prereleases: true
 
     - name: install compilers
-      shell: bash -el {0}
+      shell: bash
       run: |
         brew install llvm
 
     - name: Make wheel
-      shell: bash -el {0}
+      shell: bash
       env:
         ARCHFLAGS: "-arch arm64"
         _PYTHON_HOST_PLATFORM: macosx-11.0-arm64
       run: |
         sudo xcode-select -s /Applications/Xcode_15.3.app
-        export PATH="/opt/homebrew/opt/llvm/bin:$PATH"
+        export PATH="$PATH:/opt/homebrew/opt/llvm/bin"
         export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
         export LDFLAGS="-L/opt/homebrew/opt/llvm/lib/c++ -Wl,-rpath,/opt/homebrew/opt/llvm/lib/c++ -L/opt/homebrew/opt/llvm/lib"
 
@@ -176,17 +187,17 @@ jobs:
         delocate-wheel -v dist/refnx*.whl
 
     - name: Install package and test with pytest
-      shell: bash -el {0}
+      shell: bash
       env:
         MPLBACKEND: agg
       run: |
-        pip install -r .requirements.txt
+        python -m pip install -r .requirements.txt
         pushd dist
         python -m pip install --only-binary=refnx --no-index --find-links=. refnx
         pytest --pyargs refnx
         popd
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
       with:
         name: refnx-wheel-macos-${{ matrix.python-version }}
         path: dist/
@@ -199,9 +210,9 @@ jobs:
       fail-fast: true
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
       with:
         python-version: '3.12'
         allow-prereleases: true
@@ -209,7 +220,7 @@ jobs:
     - run: mkdir -p dist
 
     - name: Download wheel
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
       with:
         pattern: refnx-wheel-macos-3.12
         merge-multiple: true
@@ -236,9 +247,10 @@ jobs:
         # check to see that the app starts
         python check_app_starts.py dist/refnx.app/Contents/MacOS/refnx
         popd
+        printenv
 
     - name: Sign app and create dmg
-      if: ${{ github.event.pull_request.head.repo.full_name == 'refnx/refnx' }}
+      if: github.repository == 'refnx/refnx' && (github.event.pull_request.merged == true || startsWith(github.ref, 'refs/tags'))
       env:
         MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_ISA }}
         MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_ISA_PWD }}
@@ -267,8 +279,8 @@ jobs:
 
 # xcrun notarytool submit --apple-id "$APPLEID" --password "$APP_PASSWORD" --team-id 8CX8K63BQM --wait refnx.dmg
     - name: Notarize DMG
-      if: github.event.pull_request.head.repo.full_name == github.repository && github.repository == 'refnx/refnx'
-      uses: lando/notarize-action@v2
+      if: github.repository == 'refnx/refnx' && (github.event.pull_request.merged == true || startsWith(github.ref, 'refs/tags'))
+      uses: lando/notarize-action@b5c3ef16cf2fbcf2af26dc58c90255ec242abeed # v2.0.2
       with:
         product-path: "dist/refnx.dmg"
         primary-bundle-id: "com.refnx.refnx"
@@ -278,12 +290,12 @@ jobs:
         verbose: True
 
     - name: Staple Release Build
-      if: ${{ github.event.pull_request.head.repo.full_name == 'refnx/refnx' }}
-      uses: BoundfoxStudios/action-xcode-staple@v1
+      if: github.repository == 'refnx/refnx' && (github.event.pull_request.merged == true || startsWith(github.ref, 'refs/tags'))
+      uses: BoundfoxStudios/action-xcode-staple@1e2200b448c6ed4dd44b963ff17d3e340fc6b064 # v1
       with:
         product-path: "dist/refnx.dmg"
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
       with:
         name: refnx-app-macos-${{ matrix.python-version }}
         path: dist/*.dmg
@@ -300,9 +312,9 @@ jobs:
         python-version: ['3.10', '3.11', '3.12']
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'pip' # caching pip dependencies
@@ -361,7 +373,7 @@ jobs:
         move dist\motofit.exe ..\..\dist\
         cd ..\..
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
       with:
         name: refnx-exe-win-${{ matrix.python-version }}
         path: dist/
@@ -377,10 +389,10 @@ jobs:
         python-version: ["3.10"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -408,18 +420,26 @@ jobs:
         python-version: ["3.10"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
 
     - name: Lint with flake8 and black
       run: |
-        python -m pip install flake8 black
+        python -m pip install ruff black
         # stop the build if there are Python syntax errors or undefined names
         # the ignores are taken care of by black
+        ruff check refnx
+        black --check refnx
 
-        flake8 --ignore=F401,E501,W504,W503,E203,E231 --count --show-source --statistics --exclude=refnx/_lib/emcee,refnx/reflect/_app/resources_rc.py,refnx/_lib/ptemcee refnx
-        black --check --exclude="refnx/_lib/emcee/|refnx/_lib/ptemcee/" refnx -l 79
+    - name: clang-format
+      run: |
+        sudo apt update
+        sudo apt install clang-format
+        cd src 
+        clang-format --Werror -n *.cpp *.h *.c
+        cd pnr
+        clang-format --Werror -n *.cc *.h
